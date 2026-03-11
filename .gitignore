@@ -1,0 +1,24 @@
+# 개인정보 / 민감 정보
+config.json
+cookies.pkl
+post_history.json
+
+# 다운로드된 이미지
+images/
+
+# 로그
+*.log
+
+# 스크린샷 (개인정보 포함 가능)
+*.png
+
+# launchd plist (로컬 경로 포함)
+*.plist
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# OS
+.DS_Store

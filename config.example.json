@@ -1,0 +1,11 @@
+{
+    "blog_url": "https://your-blog.tistory.com",
+    "tistory_id": "your_kakao_id@email.com",
+    "tistory_pw": "your_password",
+    "login_method": "kakao",
+    "gemini_api_key": "your_gemini_api_key",
+    "pixabay_api_key": "your_pixabay_api_key",
+    "post_time": "09:00",
+    "headless": true,
+    "chrome_driver_path": "auto"
+}
