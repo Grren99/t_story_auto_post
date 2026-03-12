@@ -131,7 +131,7 @@ CATEGORIES = {
         "GitHub 시크릿 관리와 보안 자동화",
         "제로 트러스트 보안 모델 이해하기",
     ],
-    "커리어/취업": [
+    "커리어 취업": [
         "개발자 기술 면접 준비 완벽 가이드",
         "코딩 테스트 효율적인 준비 전략",
         "개발자 이력서 작성법과 포트폴리오 전략",
@@ -167,7 +167,7 @@ IMAGE_KEYWORDS = {
     "AI 머신러닝": "artificial intelligence machine learning",
     "클라우드 인프라": "cloud computing server infrastructure",
     "보안": "cybersecurity lock digital",
-    "커리어/취업": "career developer interview",
+    "커리어 취업": "career developer interview",
     "생산성 자동화": "productivity automation workflow",
 }
 
@@ -184,7 +184,7 @@ TISTORY_CATEGORY_MAP = {
     "AI 머신러닝": "AI 머신러닝",
     "클라우드 인프라": "클라우드 인프라",
     "보안": "보안",
-    "커리어/취업": "커리어/취업",
+    "커리어 취업": "커리어 취업",
     "생산성 자동화": "생산성 자동화",
 }
 
@@ -258,7 +258,7 @@ def generate_topic_with_gemini(api_key):
 - AI 머신러닝: LLM, 생성형 AI, MLOps, 머신러닝 실전 활용
 - 클라우드 인프라: AWS/GCP/Azure, 쿠버네티스, 서버리스, DevOps
 - 보안: 웹 보안, 인증/인가, 암호화, 보안 자동화
-- 커리어/취업: 면접 준비, 이력서, 연봉 협상, 커리어 성장
+- 커리어 취업: 면접 준비, 이력서, 연봉 협상, 커리어 성장
 - 생산성 자동화: 개발 워크플로우, 자동화 스크립트, 프로젝트 관리
 
 [최근 작성된 주제 (중복 금지)]
