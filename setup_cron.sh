@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================
 # 티스토리 자동 포스팅 - cron 설정 스크립트
-# Linux 서버용 (매시간, 24회/일)
+# Linux 서버용 (07~21시, 15회/일 - Tistory 일일 15개 제한)
 # ============================================
 
 set -e
@@ -29,8 +29,8 @@ crontab -l 2>/dev/null | grep -v "tistory_poster" > /tmp/crontab_clean 2>/dev/nu
 # 새 cron 작업 추가
 echo "📝 새 cron 작업 등록 중..."
 cat >> /tmp/crontab_clean << CRON
-# === 티스토리 자동 포스팅 (매시간, 24회/일) ===
-0 * * * * cd ${PROJECT_DIR} && ${PYTHON_BIN} ${SCRIPT} >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
+# === 티스토리 자동 포스팅 (07~21시, 15회/일) ===
+0 7-21 * * * cd ${PROJECT_DIR} && ${PYTHON_BIN} ${SCRIPT} >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
 # === 오래된 로그 자동 삭제 (7일 이상) ===
 0 3 * * * find ${LOG_DIR} -name "cron_*.log" -mtime +7 -delete 2>/dev/null
 CRON
@@ -42,7 +42,7 @@ echo ""
 echo "✅ cron 설정 완료!"
 echo ""
 echo "등록된 스케줄:"
-echo "  매시간 정각 (00:00 ~ 23:00, 하루 24회)"
+echo "  매시간 정각 (07:00 ~ 21:00, 하루 15회)"
 echo "  매일 03:00에 7일 이상 된 로그 자동 삭제"
 echo ""
 echo "📋 확인: crontab -l"

@@ -1184,37 +1184,151 @@ class TistoryPoster:
             logger.info("미리보기 스크린샷 저장: dry_run_preview.png")
             return True
 
-        # === 5. 완료(발행) 버튼 클릭 ===
+        # === 7. 완료(발행) 버튼 클릭 ===
         try:
-            publish_btn = self.wait.until(
-                EC.element_to_be_clickable((
-                    By.CSS_SELECTOR,
-                    "#publish-layer-btn, .btn_publish, .btn-publish"
-                ))
+            # 발행 전 현재 URL 저장
+            pre_publish_url = self.driver.current_url
+            logger.info(f"발행 전 URL: {pre_publish_url}")
+
+            # 1단계: 발행 레이어 열기 (#publish-layer-btn)
+            publish_layer_btn = self.wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "#publish-layer-btn"))
             )
-            publish_btn.click()
+            publish_layer_btn.click()
+            logger.info("발행 레이어 버튼 클릭 완료")
             time.sleep(2)
 
-            # 공개 설정
+            # 발행 레이어 열렸는지 확인 (디버깅)
+            layer_info = self.driver.execute_script("""
+                var info = [];
+                // 발행 관련 레이어/다이얼로그 찾기
+                var layers = document.querySelectorAll('[class*="publish"], [class*="layer"], [id*="publish"]');
+                layers.forEach(function(el) {
+                    var rect = el.getBoundingClientRect();
+                    info.push({
+                        tag: el.tagName, id: el.id,
+                        cls: el.className.substring(0, 80),
+                        visible: (el.offsetParent !== null || rect.height > 0),
+                        w: Math.round(rect.width), h: Math.round(rect.height)
+                    });
+                });
+                return info;
+            """)
+            for li in (layer_info or [])[:10]:
+                logger.info(f"   [발행 레이어] {li}")
+
+            # 2단계: 공개 설정
             try:
                 public_radio = self.driver.find_element(
                     By.CSS_SELECTOR, "#open20, input[value='20'], .radio_public"
                 )
                 if not public_radio.is_selected():
                     public_radio.click()
+                    logger.info("공개 설정: 공개로 변경")
                     time.sleep(0.5)
+                else:
+                    logger.info("공개 설정: 이미 공개 상태")
             except NoSuchElementException:
                 logger.warning("공개 설정 라디오 버튼 미발견. 기본값으로 진행.")
 
-            # 최종 발행 버튼
-            confirm_btn = self.wait.until(
-                EC.element_to_be_clickable((
-                    By.CSS_SELECTOR,
-                    ".btn-publish, #publish-btn, button.btn_ok"
-                ))
-            )
-            confirm_btn.click()
-            time.sleep(3)
+            # 3단계: 최종 발행 버튼 (레이어 내부의 발행 버튼)
+            # #publish-layer-btn과 다른 버튼을 클릭해야 함
+            confirm_clicked = self.driver.execute_script("""
+                // 발행 레이어 내부의 발행/저장 버튼 찾기
+                var btns = document.querySelectorAll('button, a, [role="button"]');
+                var candidates = [];
+                for (var i = 0; i < btns.length; i++) {
+                    var btn = btns[i];
+                    var text = btn.textContent.trim();
+                    var id = btn.id || '';
+                    var cls = btn.className || '';
+                    var rect = btn.getBoundingClientRect();
+                    var isVisible = (btn.offsetParent !== null || rect.height > 0) && rect.width > 0;
+
+                    // #publish-layer-btn은 제외 (이미 클릭한 버튼)
+                    if (id === 'publish-layer-btn') continue;
+
+                    // 발행 관련 버튼 찾기
+                    if (isVisible && (
+                        id === 'publish-btn' ||
+                        (cls.indexOf('btn-publish') >= 0 && cls.indexOf('btn-publish-layer') < 0) ||
+                        cls.indexOf('btn_ok') >= 0 ||
+                        cls.indexOf('btn_submit') >= 0 ||
+                        text === '발행' || text === '공개 발행' || text === '저장' ||
+                        text === '완료' || text === '발행하기'
+                    )) {
+                        candidates.push({
+                            el: btn, text: text, id: id,
+                            cls: cls.substring(0, 60),
+                            w: Math.round(rect.width), h: Math.round(rect.height)
+                        });
+                    }
+                }
+
+                // 후보 로깅
+                var log = [];
+                candidates.forEach(function(c) {
+                    log.push(c.text + '(id=' + c.id + ',cls=' + c.cls + ',w=' + c.w + ')');
+                });
+
+                // 가장 적합한 버튼 클릭
+                if (candidates.length > 0) {
+                    candidates[0].el.click();
+                    return 'clicked: ' + candidates[0].text + ' | all: ' + log.join(', ');
+                }
+                return 'no_candidates | searched: ' + btns.length;
+            """)
+            logger.info(f"최종 발행 버튼: {confirm_clicked}")
+            time.sleep(5)
+
+            # 4단계: alert 체크 (Tistory 일일 발행 제한 등)
+            try:
+                alert = self.driver.switch_to.alert
+                alert_text = alert.text
+                logger.warning(f"발행 후 알림창 감지: {alert_text}")
+                alert.dismiss()
+                time.sleep(1)
+
+                # 일일 15개 발행 제한
+                if '15' in alert_text or '최대' in alert_text:
+                    logger.error("🚫 Tistory 일일 발행 제한(15개)에 도달했습니다.")
+                    send_telegram(
+                        f"🚫 <b>일일 발행 제한</b>\n"
+                        f"Tistory 하루 최대 15개 공개 발행 제한에 도달했습니다.\n"
+                        f"내일 자동으로 재개됩니다."
+                    )
+                    return False
+
+                # 기타 알림
+                logger.warning(f"알림 내용: {alert_text}")
+                return False
+
+            except Exception:
+                pass  # 알림 없음 = 정상
+
+            # 5단계: 발행 성공 확인 (URL 변경 체크)
+            try:
+                post_publish_url = self.driver.current_url
+            except UnexpectedAlertPresentException as e:
+                # alert가 늦게 뜨는 경우 대비
+                try:
+                    alert = self.driver.switch_to.alert
+                    alert_text = alert.text
+                    logger.warning(f"URL 확인 중 알림창: {alert_text}")
+                    alert.dismiss()
+                except Exception:
+                    pass
+                logger.error(f"발행 중 예외 발생: {e}")
+                return False
+
+            logger.info(f"발행 후 URL: {post_publish_url}")
+
+            if post_publish_url != pre_publish_url:
+                logger.info(f"✅ 글 발행 성공 확인 (URL 변경됨)")
+            else:
+                # URL 안 바뀌었으면 스크린샷 남기기
+                self.driver.save_screenshot('debug_after_publish.png')
+                logger.warning("⚠️ 발행 후 URL이 변경되지 않았습니다. 스크린샷: debug_after_publish.png")
 
             logger.info(f"✅ 글 발행 완료: {title}")
             logger.info(f"   카테고리: {category or '없음'}")
@@ -1298,11 +1412,22 @@ def main():
         logger.info(f"썸네일: {post.get('thumbnail', '없음')}")
         logger.info(f"이미지 파일: {len(post.get('image_files', []))}개")
 
+        # 메타 디스크립션을 본문 상단에 삽입 (SEO)
+        meta_desc = post.get('meta_description', '')
+        content = post['content']
+        if meta_desc:
+            meta_html = (
+                f'<p style="font-size:15px;color:#555;background:#f0f4f8;'
+                f'padding:12px 16px;border-radius:6px;margin-bottom:20px;">'
+                f'{meta_desc}</p>'
+            )
+            content = meta_html + "\n" + content
+
         poster.setup_driver(headless=headless)
         poster.login()
-        poster.create_post(
+        result = poster.create_post(
             title=post['title'],
-            html_content=post['content'],
+            html_content=content,
             category=post.get('category'),
             thumbnail=post.get('thumbnail'),
             image_files=post.get('image_files'),
@@ -1310,13 +1435,16 @@ def main():
             dry_run=args.dry_run
         )
 
-        logger.info("=== 포스팅 완료 ===")
-        send_telegram(
-            f"✅ <b>포스팅 성공</b>\n"
-            f"제목: {post['title']}\n"
-            f"카테고리: {post.get('category', '미지정')}\n"
-            f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        )
+        if result:
+            logger.info("=== 포스팅 완료 ===")
+            send_telegram(
+                f"✅ <b>포스팅 성공</b>\n"
+                f"제목: {post['title']}\n"
+                f"카테고리: {post.get('category', '미지정')}\n"
+                f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+        else:
+            logger.warning("=== 포스팅 실패 (발행 제한 또는 오류) ===")
 
     except Exception as e:
         logger.error(f"❌ 포스팅 실패: {e}")

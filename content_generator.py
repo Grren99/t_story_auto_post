@@ -409,12 +409,10 @@ def insert_images_into_content(html_content, images_html, topic=""):
 # ============================================================
 GEMINI_MODELS = [
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
 ]
 
 
-def call_gemini_api(api_key, prompt, model=None, max_retries=3):
+def call_gemini_api(api_key, prompt, model=None, max_retries=1):
     """단일 Gemini 모델로 API 호출 (429 재시도 포함)"""
     model = model or GEMINI_MODELS[0]
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
@@ -486,8 +484,83 @@ def call_gemini_api_with_fallback(api_key, prompt):
     raise Exception(f"모든 API 키 & 모델 실패. 마지막 에러: {last_error}")
 
 
+def generate_toc(html_content):
+    """HTML 본문에서 h2/h3 태그를 파싱하여 목차(Table of Contents) HTML 생성"""
+    headings = re.findall(r'<(h[23])[^>]*>(.*?)</\1>', html_content, re.IGNORECASE | re.DOTALL)
+    if len(headings) < 2:
+        return ""
+
+    toc_items = []
+    for i, (tag, text) in enumerate(headings):
+        # HTML 태그 제거하여 순수 텍스트 추출
+        clean_text = re.sub(r'<[^>]+>', '', text).strip()
+        anchor_id = f"toc-{i}"
+        indent = "margin-left:20px;" if tag.lower() == "h3" else ""
+        toc_items.append(
+            f'<li style="{indent}"><a href="#{anchor_id}" style="text-decoration:none;color:#333;">{clean_text}</a></li>'
+        )
+
+    toc_html = (
+        '<div style="background:#f8f9fa;border:1px solid #e1e4e8;border-radius:8px;padding:20px;margin:20px 0;">'
+        '<p style="font-weight:bold;font-size:18px;margin-bottom:10px;">📑 목차</p>'
+        f'<ul style="list-style:none;padding-left:0;margin:0;">{"".join(toc_items)}</ul>'
+        '</div>'
+    )
+
+    # 본문의 h2/h3에 id 속성 추가
+    counter = [0]
+    def add_id(match):
+        tag = match.group(1)
+        attrs = match.group(2) or ""
+        content = match.group(3)
+        anchor_id = f"toc-{counter[0]}"
+        counter[0] += 1
+        return f'<{tag}{attrs} id="{anchor_id}">{content}</{tag}>'
+
+    html_content = re.sub(r'<(h[23])([^>]*)>(.*?)</\1>', add_id, html_content, flags=re.IGNORECASE | re.DOTALL)
+
+    return toc_html, html_content
+
+
+def get_related_posts(current_topic, current_category, max_count=3):
+    """post_history.json에서 관련 글 목록을 가져와 추천 섹션 HTML 생성"""
+    history = load_history()
+    post_log = history.get("post_log", [])
+    if not post_log:
+        return ""
+
+    # 같은 카테고리 글 우선, 최근 글에서 선택
+    same_category = [p for p in post_log if p.get("category") == current_category and p.get("title") != current_topic]
+    other_posts = [p for p in post_log if p.get("category") != current_category and p.get("title") != current_topic]
+
+    # 같은 카테고리에서 최대 2개 + 다른 카테고리에서 나머지
+    candidates = same_category[-5:] + other_posts[-5:]
+    if not candidates:
+        return ""
+
+    random.shuffle(candidates)
+    selected = candidates[:max_count]
+
+    items_html = ""
+    for post in selected:
+        title = post.get("title", "")
+        category = post.get("category", "")
+        items_html += (
+            f'<li style="margin-bottom:8px;">'
+            f'<span style="color:#666;font-size:13px;">[{category}]</span> '
+            f'{title}</li>'
+        )
+
+    return (
+        '<div style="background:#fff8e1;border-left:4px solid #ffc107;padding:15px 20px;margin:30px 0;border-radius:4px;">'
+        '<p style="font-weight:bold;font-size:16px;margin-bottom:10px;">📌 함께 읽으면 좋은 글</p>'
+        f'<ul style="padding-left:20px;margin:0;">{items_html}</ul>'
+        '</div>'
+    )
+
+
 def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
-    prompt = f"""당신은 한국어 IT/개발 블로그 작성 전문가입니다.
+    prompt = f"""당신은 한국어 IT/개발 블로그 SEO 전문 작성자입니다.
 
 아래 조건에 맞는 블로그 글을 작성해 주세요.
 
@@ -497,22 +570,29 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
 [작성 규칙]
 1. 반드시 HTML 태그로 포맷팅하세요 (티스토리 블로그용)
 2. 제목은 별도로 첫 줄에 순수 텍스트로 출력하세요 (HTML 태그 없이)
-3. 제목 다음 줄에 이미지 검색 키워드를 영어로 3개 출력하세요 (쉼표 구분, 주제와 직접 관련된 구체적 키워드)
-4. 셋째 줄부터 본문을 HTML로 작성하세요
-5. 사용할 HTML 태그: <p>, <h2>, <b>, <blockquote>, <table>, <code>, <ul>, <li>
-6. ⚠️ 절대 중요: 본문은 1500자 이내로 간결하게 작성하세요. 절대 2000자를 넘기지 마세요.
-7. h2 소제목을 3~4개만 사용하여 구조화
-8. 핵심 키워드는 <b> 태그로 강조
-9. 비교 내용이 있으면 <table> 사용 (스타일 포함)
-10. 테이블 스타일: style="border-collapse:collapse;width:100%", th에 background:#f4f4f4, td/th에 border:1px solid #ddd;padding:8px
-11. 마지막에 댓글 유도 문구 포함
-12. 실용적이고 구체적인 내용 위주로 작성
-13. ⚠️ 반드시 글을 끝까지 완성하세요. 모든 HTML 태그를 정상적으로 닫고, 마무리 문단까지 작성하세요.
+3. ⚠️ SEO 제목 규칙: 제목에 검색 유입이 높은 핵심 키워드를 반드시 포함하세요. 예: "2026년 최신", "완벽 가이드", "비교 분석", "입문자용", "실무 활용법" 등의 검색 키워드 조합
+4. 제목 다음 줄에 이미지 검색 키워드를 영어로 3개 출력하세요 (쉼표 구분)
+5. 셋째 줄에 메타 디스크립션을 한 줄로 출력하세요 (150자 이내, 검색 결과에 노출될 요약문)
+6. 넷째 줄부터 본문을 HTML로 작성하세요
+
+[본문 구조 규칙]
+1. ⚠️ 본문은 3000자~5000자 분량으로 충분히 상세하게 작성하세요
+2. H2 소제목을 5~7개 사용하여 큰 구조를 잡으세요
+3. 각 H2 아래에 필요하면 H3 소제목을 1~2개 추가하세요
+4. 핵심 키워드는 <b> 태그로 강조
+5. 비교 내용이 있으면 <table> 사용 (스타일 포함)
+6. 테이블 스타일: style="border-collapse:collapse;width:100%", th에 background:#f4f4f4, td/th에 border:1px solid #ddd;padding:8px
+7. 코드 예시가 있으면 <pre><code> 태그 사용
+8. 각 섹션마다 실용적이고 구체적인 예시, 수치, 비교를 포함하세요
+9. 도입부에 독자의 관심을 끄는 질문이나 상황 제시
+10. 마지막에 핵심 요약 + 댓글 유도 문구 포함
+11. ⚠️ 반드시 글을 끝까지 완성하세요. 모든 HTML 태그를 정상적으로 닫고, 마무리 문단까지 작성하세요.
 
 [출력 형식]
-첫 줄: 글 제목 (순수 텍스트만)
+첫 줄: 글 제목 (순수 텍스트, SEO 키워드 포함)
 둘째 줄: 이미지 검색 키워드 (영어, 쉼표 구분)
-셋째 줄부터: 본문 HTML
+셋째 줄: 메타 디스크립션 (한국어, 150자 이내)
+넷째 줄부터: 본문 HTML
 """
 
     for attempt in range(max_attempts):
@@ -523,19 +603,45 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
         title = title.replace('```html', '').replace('```', '').strip()
 
         image_keywords = ""
+        meta_description = ""
         content_start = 1
+
+        # 둘째 줄: 이미지 키워드
         if len(lines) > 1:
             second_line = lines[1].strip()
             if not second_line.startswith('<'):
                 image_keywords = second_line.replace('```html', '').replace('```', '').strip()
                 content_start = 2
 
+        # 셋째 줄: 메타 디스크립션
+        if len(lines) > content_start:
+            meta_line = lines[content_start].strip()
+            if not meta_line.startswith('<') and len(meta_line) > 10:
+                meta_description = meta_line.replace('```html', '').replace('```', '').strip()
+                content_start += 1
+
         content = '\n'.join(lines[content_start:]).strip()
         content = content.replace('```html', '').replace('```', '').strip()
 
+        # 목차(TOC) 생성 & 삽입
+        toc_result = generate_toc(content)
+        if toc_result:
+            toc_html, content = toc_result
+            # 첫 번째 <h2> 앞에 목차 삽입
+            first_h2 = re.search(r'<h2', content, re.IGNORECASE)
+            if first_h2:
+                content = content[:first_h2.start()] + toc_html + "\n" + content[first_h2.start():]
+            else:
+                content = toc_html + "\n" + content
+
+        # 관련 글 추천 섹션 추가
+        related_html = get_related_posts(title, category)
+        if related_html:
+            content = content + "\n" + related_html
+
         # 잘림 감지: 열린 태그가 닫히지 않았는지 확인
         if not is_html_truncated(content):
-            return {"title": title, "content": content, "image_keywords": image_keywords}
+            return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description}
 
         if attempt < max_attempts - 1:
             print(f"   ⚠️ 글이 잘림 감지 — 재생성 시도 ({attempt+2}/{max_attempts})")
@@ -543,7 +649,7 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
             print(f"   🔧 글이 잘렸지만 최대 시도 횟수 도달 — 잘린 부분 복구 후 사용")
             content = fix_truncated_html(content)
 
-    return {"title": title, "content": content, "image_keywords": image_keywords}
+    return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description}
 
 
 def is_html_truncated(html):
@@ -659,6 +765,7 @@ def get_daily_post():
         "image_files": image_data.get("files", []),
         "image_map": image_data.get("image_map", {}),
         "category": tistory_category,
+        "meta_description": post.get("meta_description", ""),
     }
 
 
