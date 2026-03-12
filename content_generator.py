@@ -97,21 +97,6 @@ CATEGORIES = {
     ],
 }
 
-# 책 제목 → Google Books 검색용 영어 제목 매핑
-BOOK_TITLE_MAP = {
-    "클린 코드": "Clean Code Robert Martin",
-    "리팩터링 2판": "Refactoring Martin Fowler",
-    "도메인 주도 설계": "Domain Driven Design Eric Evans",
-    "가상 면접 사례로 배우는 대규모 시스템 설계": "System Design Interview Alex Xu",
-    "이펙티브 자바": "Effective Java Joshua Bloch",
-    "실용주의 프로그래머": "Pragmatic Programmer",
-    "디자인 패턴의 아름다움": "Design Patterns",
-    "객체지향의 사실과 오해": "Object Oriented Programming",
-    "함수형 프로그래밍": "Functional Programming",
-    "소프트웨어 장인 정신": "Software Craftsmanship",
-    "혼자 공부하는 컴퓨터구조": "Computer Architecture",
-}
-
 # 카테고리별 기본 Pixabay 키워드
 IMAGE_KEYWORDS = {
     "기술 리뷰": "programming code technology",
@@ -151,7 +136,8 @@ def save_history(history):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 
-def pick_topic():
+def pick_topic_from_pool():
+    """하드코딩된 주제 풀에서 선택 (Gemini 주제 생성 실패 시 폴백용)"""
     history = load_history()
     posted = set(history.get("posted_topics", []))
 
@@ -174,6 +160,65 @@ def pick_topic():
     random.seed()
 
     return chosen["category"], chosen["topic"]
+
+
+def generate_topic_with_gemini(api_key):
+    """Gemini API로 새로운 블로그 주제 자동 생성"""
+    history = load_history()
+    posted = history.get("posted_topics", [])
+    recent_topics = posted[-30:] if len(posted) > 30 else posted  # 최근 30개만
+
+    categories = list(CATEGORIES.keys())
+    category = random.choice(categories)
+
+    recent_list = "\n".join(f"- {t}" for t in recent_topics) if recent_topics else "(없음)"
+
+    prompt = f"""당신은 한국어 IT/개발 블로그 주제를 기획하는 전문가입니다.
+
+아래 카테고리에 맞는 블로그 글 주제를 1개만 제안해 주세요.
+
+[카테고리] {category}
+
+[카테고리 설명]
+- 기술 리뷰: 프레임워크, 언어, 라이브러리 비교/분석
+- 개발 도구: IDE, 터미널 도구, 생산성 도구 소개
+- 개발 책 리뷰: 프로그래밍/소프트웨어 관련 도서 리뷰
+- 이슈 분석: 개발자 커리어, 업계 트렌드, 문화
+- 튜토리얼: 단계별 실습 가이드, 세팅 가이드
+
+[최근 작성된 주제 (중복 금지)]
+{recent_list}
+
+[규칙]
+1. 위 최근 주제와 겹치지 않는 새로운 주제를 제안하세요
+2. {datetime.date.today().year}년 기준 최신 트렌드를 반영하세요
+3. 한국 개발자가 관심 가질 만한 실용적인 주제
+4. 주제만 한 줄로 출력하세요 (설명, 번호, 기호 없이)"""
+
+    raw = call_gemini_api_with_fallback(api_key, prompt)
+    topic = raw.strip().split('\n')[0].strip()
+    topic = topic.lstrip('-·•0123456789. ').strip()
+    topic = topic.replace('"', '').replace("'", "").strip()
+
+    if len(topic) < 5 or len(topic) > 100:
+        raise Exception(f"생성된 주제가 유효하지 않음: '{topic}'")
+
+    return category, topic
+
+
+def pick_topic(api_key=""):
+    """주제 선택: Gemini 자동 생성 → 실패 시 하드코딩 풀에서 선택"""
+    if api_key and api_key != "여기에_GEMINI_API_키":
+        try:
+            print("🧠 Gemini로 새로운 주제 생성 중...")
+            category, topic = generate_topic_with_gemini(api_key)
+            print(f"   ✅ AI 생성 주제: [{category}] {topic}")
+            return category, topic
+        except Exception as e:
+            print(f"   ⚠️ 주제 생성 실패: {e}")
+            print(f"   📋 하드코딩 주제 풀에서 선택합니다.")
+
+    return pick_topic_from_pool()
 
 
 # ============================================================
@@ -213,99 +258,6 @@ def download_image(image_url, filename, retry=4):
 
     return None
 
-
-# ============================================================
-# Google Books API - 책 표지 검색 (무료, 키 불필요)
-# ============================================================
-def search_book_cover(topic):
-    """
-    Google Books API로 책 표지 이미지 검색
-    - 완전 무료, API 키 불필요
-    - 한국어 책도 검색 가능
-    """
-    # 주제에서 책 이름 추출
-    search_term = None
-    for korean_title, english_title in BOOK_TITLE_MAP.items():
-        if korean_title in topic:
-            search_term = english_title
-            break
-
-    if not search_term:
-        # 매핑에 없으면 주제 자체를 검색
-        search_term = topic
-
-    encoded_query = urllib.parse.quote(search_term)
-    url = f"https://www.googleapis.com/books/v1/volumes?q={encoded_query}&maxResults=3&langRestrict=ko"
-
-    # 429 대비 재시도 (최대 3회, 간격 2초)
-    for attempt in range(3):
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "TistoryAutoPost/1.0"
-        })
-
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                items = result.get("items", [])
-
-                for item in items:
-                    image_links = item.get("volumeInfo", {}).get("imageLinks", {})
-                    for size in ["extraLarge", "large", "medium", "thumbnail", "smallThumbnail"]:
-                        img_url = image_links.get(size, "")
-                        if img_url:
-                            img_url = img_url.replace("http://", "https://")
-                            img_url = re.sub(r'zoom=\d', 'zoom=3', img_url)
-
-                            book_title = item.get("volumeInfo", {}).get("title", topic)
-                            authors = ", ".join(item.get("volumeInfo", {}).get("authors", []))
-
-                            return {
-                                "url": img_url,
-                                "title": book_title,
-                                "authors": authors,
-                                "type": "book_cover",
-                            }
-                # 검색 결과 있지만 이미지 없으면 break
-                break
-
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < 2:
-                wait_time = (attempt + 1) * 3
-                print(f"   ⏳ Google Books 요청 제한 (429). {wait_time}초 후 재시도...")
-                time.sleep(wait_time)
-                continue
-            print(f"   ⚠️ Google Books 검색 실패: {e}")
-            break
-        except Exception as e:
-            print(f"   ⚠️ Google Books 검색 실패: {e}")
-            break
-
-    # 영어로 못 찾으면 한국어로 재시도
-    if search_term != topic:
-        try:
-            encoded_query = urllib.parse.quote(topic)
-            url = f"https://www.googleapis.com/books/v1/volumes?q={encoded_query}&maxResults=3"
-            req = urllib.request.Request(url, headers={"User-Agent": "TistoryAutoPost/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                items = result.get("items", [])
-                for item in items:
-                    image_links = item.get("volumeInfo", {}).get("imageLinks", {})
-                    for size in ["extraLarge", "large", "medium", "thumbnail"]:
-                        img_url = image_links.get(size, "")
-                        if img_url:
-                            img_url = img_url.replace("http://", "https://")
-                            img_url = re.sub(r'zoom=\d', 'zoom=3', img_url)
-                            return {
-                                "url": img_url,
-                                "title": item.get("volumeInfo", {}).get("title", topic),
-                                "authors": ", ".join(item.get("volumeInfo", {}).get("authors", [])),
-                                "type": "book_cover",
-                            }
-        except Exception:
-            pass
-
-    return None
 
 
 # ============================================================
@@ -388,51 +340,14 @@ def download_unsplash_image(query, filename):
 # 스마트 이미지 검색 (카테고리별 맞춤)
 # ============================================================
 def get_smart_images(category, topic, image_keywords="", pixabay_key=""):
-    """
-    카테고리에 따라 최적의 이미지 소스 선택:
-    - 책 리뷰 → Google Books API (실제 책 표지)
-    - 기타 → Pixabay (주제별 키워드 검색)
-    """
+    """Pixabay에서 주제별 키워드로 이미지 검색"""
     result = {"thumbnail": None, "files": [], "images_html": [], "image_map": {}}
-    today = datetime.date.today().strftime("%Y%m%d")
 
-    # === 1. 책 리뷰: 실제 책 표지 가져오기 ===
-    if category == "개발 책 리뷰":
-        print(f"📚 Google Books에서 책 표지 검색 중...")
-        book = search_book_cover(topic)
-
-        if book:
-            print(f"   ✅ 책 발견: {book['title']} ({book['authors']})")
-
-            # 책 표지 다운로드
-            filepath = download_image(book["url"], f"{today}_book_cover.jpg")
-            if filepath:
-                result["thumbnail"] = filepath
-                result["files"].append(filepath)
-
-            # 책 표지 HTML (본문 상단용)
-            result["images_html"].append(
-                f'<div style="text-align:center;margin:20px 0;">'
-                f'<img src="{book["url"]}" alt="{book["title"]}" '
-                f'style="max-height:400px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);" />'
-                f'<p style="font-size:13px;color:#666;margin-top:8px;">'
-                f'📖 {book["title"]}{" - " + book["authors"] if book["authors"] else ""}</p>'
-                f'</div>'
-            )
-            # URL → 로컬파일 매핑 (나중에 Tistory 업로드용)
-            if filepath:
-                result["image_map"][book["url"]] = filepath
-        else:
-            print(f"   ⚠️ 책 표지를 찾지 못했습니다.")
-
-    # === 2. Pixabay로 추가 이미지 검색 ===
     if pixabay_key:
         search_query = image_keywords or IMAGE_KEYWORDS.get(category, "programming coding")
         print(f"🖼️ Pixabay 이미지 검색 중: {search_query}")
 
-        # 책 리뷰면 1장만, 그 외는 2~3장
-        count = 1 if category == "개발 책 리뷰" else 3
-        images = search_pixabay_images(pixabay_key, search_query, count=count)
+        images = search_pixabay_images(pixabay_key, search_query, count=3)
 
         if images:
             print(f"   ✅ Pixabay 이미지 {len(images)}장 찾음 (외부 URL 직접 사용)")
@@ -490,32 +405,66 @@ def insert_images_into_content(html_content, images_html, topic=""):
 
 
 # ============================================================
-# Gemini API
+# Gemini API (모델 폴백 체인 + 429 재시도)
 # ============================================================
-def call_gemini_api(api_key, prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+]
+
+
+def call_gemini_api(api_key, prompt, model=None, max_retries=3):
+    """단일 Gemini 모델로 API 호출 (429 재시도 포함)"""
+    model = model or GEMINI_MODELS[0]
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.8, "maxOutputTokens": 8192}
+        "generationConfig": {"temperature": 0.8, "maxOutputTokens": 16384}
     }
 
     data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(url, data=data,
-                                 headers={"Content-Type": "application/json"}, method="POST")
 
-    try:
-        with urllib.request.urlopen(req, timeout=60) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8')
-        raise Exception(f"Gemini API 에러 ({e.code}): {error_body}")
-    except Exception as e:
-        raise Exception(f"Gemini API 호출 실패: {e}")
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            if e.code == 429 and attempt < max_retries:
+                wait = (attempt + 1) * 10  # 10초, 20초, 30초
+                print(f"   ⏳ {model} 요청 제한 (429). {wait}초 후 재시도... ({attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            raise Exception(f"Gemini API 에러 ({e.code}): {error_body}")
+        except Exception as e:
+            raise Exception(f"Gemini API 호출 실패: {e}")
+
+    raise Exception(f"Gemini API 최대 재시도 횟수 초과 ({model})")
 
 
-def generate_post_with_gemini(api_key, category, topic):
+def call_gemini_api_with_fallback(api_key, prompt):
+    """Gemini 모델 폴백 체인: 2.5 Flash → 2.0 Flash → 1.5 Flash"""
+    for i, model in enumerate(GEMINI_MODELS):
+        try:
+            print(f"   🔄 {model} 시도 중... ({i+1}/{len(GEMINI_MODELS)})")
+            result = call_gemini_api(api_key, prompt, model=model)
+            if i > 0:
+                print(f"   ✅ {model} 폴백 성공!")
+            return result
+        except Exception as e:
+            print(f"   ⚠️ {model} 실패: {e}")
+            if i < len(GEMINI_MODELS) - 1:
+                print(f"   ➡️ 다음 모델로 폴백합니다...")
+            else:
+                raise Exception(f"모든 Gemini 모델 실패. 마지막 에러: {e}")
+
+
+def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
     prompt = f"""당신은 한국어 IT/개발 블로그 작성 전문가입니다.
 
 아래 조건에 맞는 블로그 글을 작성해 주세요.
@@ -529,13 +478,14 @@ def generate_post_with_gemini(api_key, category, topic):
 3. 제목 다음 줄에 이미지 검색 키워드를 영어로 3개 출력하세요 (쉼표 구분, 주제와 직접 관련된 구체적 키워드)
 4. 셋째 줄부터 본문을 HTML로 작성하세요
 5. 사용할 HTML 태그: <p>, <h2>, <b>, <blockquote>, <table>, <code>, <ul>, <li>
-6. 본문은 1500~2500자 사이로 작성
-7. h2 소제목을 3~6개 사용하여 구조화
+6. ⚠️ 절대 중요: 본문은 1500자 이내로 간결하게 작성하세요. 절대 2000자를 넘기지 마세요.
+7. h2 소제목을 3~4개만 사용하여 구조화
 8. 핵심 키워드는 <b> 태그로 강조
 9. 비교 내용이 있으면 <table> 사용 (스타일 포함)
 10. 테이블 스타일: style="border-collapse:collapse;width:100%", th에 background:#f4f4f4, td/th에 border:1px solid #ddd;padding:8px
 11. 마지막에 댓글 유도 문구 포함
 12. 실용적이고 구체적인 내용 위주로 작성
+13. ⚠️ 반드시 글을 끝까지 완성하세요. 모든 HTML 태그를 정상적으로 닫고, 마무리 문단까지 작성하세요.
 
 [출력 형식]
 첫 줄: 글 제목 (순수 텍스트만)
@@ -543,48 +493,81 @@ def generate_post_with_gemini(api_key, category, topic):
 셋째 줄부터: 본문 HTML
 """
 
-    raw_response = call_gemini_api(api_key, prompt)
-    lines = raw_response.strip().split('\n')
+    for attempt in range(max_attempts):
+        raw_response = call_gemini_api_with_fallback(api_key, prompt)
+        lines = raw_response.strip().split('\n')
 
-    title = lines[0].strip().replace('#', '').replace('<h1>', '').replace('</h1>', '')
-    title = title.replace('```html', '').replace('```', '').strip()
+        title = lines[0].strip().replace('#', '').replace('<h1>', '').replace('</h1>', '')
+        title = title.replace('```html', '').replace('```', '').strip()
 
-    image_keywords = ""
-    content_start = 1
-    if len(lines) > 1:
-        second_line = lines[1].strip()
-        if not second_line.startswith('<'):
-            image_keywords = second_line.replace('```html', '').replace('```', '').strip()
-            content_start = 2
+        image_keywords = ""
+        content_start = 1
+        if len(lines) > 1:
+            second_line = lines[1].strip()
+            if not second_line.startswith('<'):
+                image_keywords = second_line.replace('```html', '').replace('```', '').strip()
+                content_start = 2
 
-    content = '\n'.join(lines[content_start:]).strip()
-    content = content.replace('```html', '').replace('```', '').strip()
+        content = '\n'.join(lines[content_start:]).strip()
+        content = content.replace('```html', '').replace('```', '').strip()
+
+        # 잘림 감지: 열린 태그가 닫히지 않았는지 확인
+        if not is_html_truncated(content):
+            return {"title": title, "content": content, "image_keywords": image_keywords}
+
+        if attempt < max_attempts - 1:
+            print(f"   ⚠️ 글이 잘림 감지 — 재생성 시도 ({attempt+2}/{max_attempts})")
+        else:
+            print(f"   🔧 글이 잘렸지만 최대 시도 횟수 도달 — 잘린 부분 복구 후 사용")
+            content = fix_truncated_html(content)
 
     return {"title": title, "content": content, "image_keywords": image_keywords}
 
 
-# ============================================================
-# 폴백
-# ============================================================
-FALLBACK_POSTS = [
-    {
-        "title": "개발자가 알아야 할 Git 명령어 TOP 10",
-        "content": """<p>Git은 개발자의 필수 도구입니다. 오늘은 실무에서 가장 많이 쓰는 Git 명령어 10가지를 정리합니다.</p>
-<h2>1. git log --oneline --graph</h2>
-<p>커밋 히스토리를 <b>한 줄씩 그래프</b>로 보여줍니다.</p>
-<h2>2. git stash / git stash pop</h2>
-<p>작업 중인 변경사항을 <b>임시 저장</b>하고, 다른 브랜치에서 작업 후 다시 꺼내올 수 있습니다.</p>
-<h2>3. git rebase -i</h2>
-<p>커밋 히스토리를 <b>깔끔하게 정리</b>할 수 있습니다.</p>
-<h2>4. git cherry-pick</h2>
-<p>다른 브랜치의 <b>특정 커밋만 가져올</b> 수 있습니다.</p>
-<h2>5. git bisect</h2>
-<p>버그가 처음 발생한 커밋을 <b>이진 탐색으로 찾아</b>줍니다.</p>
-<h2>마무리</h2>
-<p>여러분이 자주 쓰는 Git 명령어가 있다면 댓글로 공유해 주세요!</p>""",
-        "image_keywords": "git version control programming",
-    },
-]
+def is_html_truncated(html):
+    """HTML이 잘렸는지 감지 (열린 태그가 닫히지 않은 경우)"""
+    block_tags = ['p', 'h2', 'h3', 'blockquote', 'table', 'tr', 'td', 'th',
+                  'thead', 'tbody', 'ul', 'ol', 'li', 'div', 'code', 'pre']
+
+    open_tags = []
+    for match in re.finditer(r'<(/?)(\w+)[^>]*>', html):
+        is_close = match.group(1) == '/'
+        tag = match.group(2).lower()
+        if tag not in block_tags:
+            continue
+        if is_close:
+            if open_tags and open_tags[-1] == tag:
+                open_tags.pop()
+        else:
+            open_tags.append(tag)
+
+    return len(open_tags) > 0
+
+
+def fix_truncated_html(html):
+    """토큰 제한으로 잘린 HTML의 열린 태그를 닫아서 복구"""
+    block_tags = ['p', 'h2', 'h3', 'blockquote', 'table', 'tr', 'td', 'th',
+                  'thead', 'tbody', 'ul', 'ol', 'li', 'div', 'code', 'pre']
+
+    open_tags = []
+    for match in re.finditer(r'<(/?)(\w+)[^>]*>', html):
+        is_close = match.group(1) == '/'
+        tag = match.group(2).lower()
+        if tag not in block_tags:
+            continue
+        if is_close:
+            if open_tags and open_tags[-1] == tag:
+                open_tags.pop()
+        else:
+            open_tags.append(tag)
+
+    if open_tags:
+        print(f"   🔧 잘린 HTML 감지 — 닫히지 않은 태그 {len(open_tags)}개 복구: {open_tags}")
+        for tag in reversed(open_tags):
+            html += f'</{tag}>'
+
+    return html
+
 
 
 # ============================================================
@@ -596,7 +579,7 @@ def get_daily_post():
     api_key = config.get("gemini_api_key", "")
     pixabay_key = config.get("pixabay_api_key", "")
 
-    category, topic = pick_topic()
+    category, topic = pick_topic(api_key)
     print(f"📌 선택된 카테고리: {category}")
     print(f"📌 선택된 주제: {topic}")
 
@@ -604,20 +587,16 @@ def get_daily_post():
 
     if api_key and api_key != "여기에_GEMINI_API_키":
         try:
-            print("🤖 Gemini API로 글 생성 중...")
+            print("🤖 Gemini API로 글 생성 중 (모델 폴백 체인 활성화)...")
             post = generate_post_with_gemini(api_key, category, topic)
             print(f"✅ 생성 완료: {post['title']} ({len(post['content'])}자)")
         except Exception as e:
-            print(f"⚠️ Gemini API 실패: {e}")
-            print("📋 폴백 글을 사용합니다.")
+            print(f"⚠️ 모든 Gemini 모델 실패: {e}")
+            print("🚫 AI 생성 불가 — 이번 실행은 발행을 건너뜁니다.")
+            return None
     else:
-        print("⚠️ Gemini API 키 미설정. 폴백 글 사용.")
-
-    if post is None:
-        today = datetime.date.today()
-        fb = FALLBACK_POSTS[today.toordinal() % len(FALLBACK_POSTS)]
-        post = {"title": fb["title"], "content": fb["content"].strip(),
-                "image_keywords": fb.get("image_keywords", "")}
+        print("⚠️ Gemini API 키 미설정 — 발행을 건너뜁니다.")
+        return None
 
     # === 스마트 이미지 검색 ===
     image_data = get_smart_images(

@@ -17,6 +17,8 @@ import os
 import pickle
 import argparse
 import logging
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from datetime import datetime
 
@@ -59,6 +61,27 @@ CATEGORIES_CACHE = Path(__file__).parent / "categories_cache.json"
 def load_config():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def send_telegram(message):
+    """텔레그램으로 알림 메시지 전송"""
+    try:
+        config = load_config()
+        token = config.get("telegram_bot_token", "")
+        chat_id = config.get("telegram_chat_id", "")
+        if not token or not chat_id:
+            logger.warning("텔레그램 설정이 없어 알림을 건너뜁니다.")
+            return
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=data)
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        logger.warning(f"텔레그램 알림 전송 실패: {e}")
 
 
 # ============================================================
@@ -1264,6 +1287,11 @@ def main():
         else:
             post = get_daily_post()
 
+        if post is None:
+            logger.info("🚫 AI 글 생성 실패 — 이번 실행은 발행을 건너뜁니다.")
+            send_telegram("🚫 <b>글 생성 실패</b>\nAI 글 생성에 실패하여 이번 실행을 건너뜁니다.")
+            return
+
         logger.info(f"=== 티스토리 자동 포스팅 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M')}) ===")
         logger.info(f"선택된 글: {post['title']}")
         logger.info(f"카테고리: {post.get('category', '미지정')}")
@@ -1283,9 +1311,16 @@ def main():
         )
 
         logger.info("=== 포스팅 완료 ===")
+        send_telegram(
+            f"✅ <b>포스팅 성공</b>\n"
+            f"제목: {post['title']}\n"
+            f"카테고리: {post.get('category', '미지정')}\n"
+            f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
 
     except Exception as e:
         logger.error(f"❌ 포스팅 실패: {e}")
+        send_telegram(f"❌ <b>포스팅 실패</b>\n에러: {e}")
         try:
             if poster.driver and poster.driver.window_handles:
                 poster.driver.save_screenshot('error_screenshot.png')
