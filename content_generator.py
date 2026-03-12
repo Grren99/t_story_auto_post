@@ -95,7 +95,7 @@ CATEGORIES = {
         "Git hooks로 코드 품질 자동 관리하기",
         "Terraform으로 AWS 인프라 코드로 관리하기",
     ],
-    "AI/머신러닝": [
+    "AI 머신러닝": [
         "ChatGPT vs Claude vs Gemini 성능 비교 분석",
         "LLM 파인튜닝 입문 가이드",
         "RAG(검색 증강 생성) 구현 실전 가이드",
@@ -107,7 +107,7 @@ CATEGORIES = {
         "벡터 데이터베이스 비교 (Pinecone vs Weaviate vs Chroma)",
         "프롬프트 엔지니어링 실전 테크닉",
     ],
-    "클라우드/인프라": [
+    "클라우드 인프라": [
         "AWS vs GCP vs Azure 서비스 비교 가이드",
         "쿠버네티스(K8s) 입문 핵심 개념 정리",
         "서버리스 아키텍처 장단점과 적용 사례",
@@ -143,7 +143,7 @@ CATEGORIES = {
         "프리랜서 개발자 시작 가이드",
         "개발자 번아웃 극복과 동기 부여 방법",
     ],
-    "생산성/자동화": [
+    "생산성 자동화": [
         "개발 워크플로우 자동화 도구 모음",
         "셸 스크립트로 반복 작업 자동화하기",
         "Notion으로 개발 프로젝트 관리하기",
@@ -164,11 +164,11 @@ IMAGE_KEYWORDS = {
     "개발 책 리뷰": "programming book reading",
     "이슈 분석": "software developer teamwork",
     "튜토리얼": "coding tutorial computer",
-    "AI/머신러닝": "artificial intelligence machine learning",
-    "클라우드/인프라": "cloud computing server infrastructure",
+    "AI 머신러닝": "artificial intelligence machine learning",
+    "클라우드 인프라": "cloud computing server infrastructure",
     "보안": "cybersecurity lock digital",
     "커리어/취업": "career developer interview",
-    "생산성/자동화": "productivity automation workflow",
+    "생산성 자동화": "productivity automation workflow",
 }
 
 # 내부 카테고리 → 티스토리 블로그 카테고리 매핑
@@ -181,11 +181,11 @@ TISTORY_CATEGORY_MAP = {
     "개발 책 리뷰": "개발 지식 책",
     "이슈 분석": "개발 이슈",
     "튜토리얼": "튜토리얼",
-    "AI/머신러닝": "AI/머신러닝",
-    "클라우드/인프라": "클라우드/인프라",
+    "AI 머신러닝": "AI 머신러닝",
+    "클라우드 인프라": "클라우드 인프라",
     "보안": "보안",
     "커리어/취업": "커리어/취업",
-    "생산성/자동화": "생산성/자동화",
+    "생산성 자동화": "생산성 자동화",
 }
 
 
@@ -255,11 +255,11 @@ def generate_topic_with_gemini(api_key):
 - 개발 책 리뷰: 프로그래밍/소프트웨어 관련 도서 리뷰
 - 이슈 분석: 개발자 커리어, 업계 트렌드, 문화
 - 튜토리얼: 단계별 실습 가이드, 세팅 가이드
-- AI/머신러닝: LLM, 생성형 AI, MLOps, 머신러닝 실전 활용
-- 클라우드/인프라: AWS/GCP/Azure, 쿠버네티스, 서버리스, DevOps
+- AI 머신러닝: LLM, 생성형 AI, MLOps, 머신러닝 실전 활용
+- 클라우드 인프라: AWS/GCP/Azure, 쿠버네티스, 서버리스, DevOps
 - 보안: 웹 보안, 인증/인가, 암호화, 보안 자동화
 - 커리어/취업: 면접 준비, 이력서, 연봉 협상, 커리어 성장
-- 생산성/자동화: 개발 워크플로우, 자동화 스크립트, 프로젝트 관리
+- 생산성 자동화: 개발 워크플로우, 자동화 스크립트, 프로젝트 관리
 
 [최근 작성된 주제 (중복 금지)]
 {recent_list}
