@@ -435,7 +435,8 @@ def get_smart_images(category, topic, image_keywords="", pixabay_key=""):
                 if img_url:
                     result["images_html"].append(
                         f'<div style="text-align:center;margin:20px 0;">'
-                        f'<img src="{img_url}" alt="{topic}" '
+                        f'<img src="{img_url}" alt="{topic} 관련 이미지 {i+1}" '
+                        f'loading="lazy" '
                         f'style="max-width:100%;height:auto;border-radius:8px;'
                         f'box-shadow:0 2px 8px rgba(0,0,0,0.1);" />'
                         f'<p style="font-size:11px;color:#999;margin-top:5px;">'
@@ -620,11 +621,19 @@ def get_related_posts(current_topic, current_category, max_count=3):
     for post in selected:
         title = post.get("title", "")
         category = post.get("category", "")
-        items_html += (
-            f'<li style="margin-bottom:8px;">'
-            f'<span style="color:#666;font-size:13px;">[{category}]</span> '
-            f'{title}</li>'
-        )
+        url = post.get("url", "")
+        if url:
+            items_html += (
+                f'<li style="margin-bottom:8px;">'
+                f'<span style="color:#666;font-size:13px;">[{category}]</span> '
+                f'<a href="{url}" style="color:#1a73e8;text-decoration:none;">{title}</a></li>'
+            )
+        else:
+            items_html += (
+                f'<li style="margin-bottom:8px;">'
+                f'<span style="color:#666;font-size:13px;">[{category}]</span> '
+                f'{title}</li>'
+            )
 
     return (
         '<div style="background:#fff8e1;border-left:4px solid #ffc107;padding:15px 20px;margin:30px 0;border-radius:4px;">'
@@ -713,6 +722,17 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
         related_html = get_related_posts(title, category)
         if related_html:
             content = content + "\n" + related_html
+
+        # 하단 CTA (댓글/공감 유도)
+        cta_html = (
+            '<div style="background:#e8f5e9;border-left:4px solid #4caf50;padding:15px 20px;'
+            'margin:30px 0;border-radius:4px;text-align:center;">'
+            '<p style="font-size:15px;margin:0;color:#2e7d32;">'
+            '이 글이 도움이 되셨다면 <b>공감(♥)</b>과 <b>댓글</b>로 응원해 주세요!<br>'
+            '<span style="font-size:13px;color:#666;">궁금한 점이나 다루었으면 하는 주제가 있다면 댓글로 남겨주세요.</span>'
+            '</p></div>'
+        )
+        content = content + "\n" + cta_html
 
         # 잘림 감지: 열린 태그가 닫히지 않았는지 확인
         if not is_html_truncated(content):
@@ -827,6 +847,7 @@ def get_daily_post():
         "category": category,
         "topic": topic,
         "title": post["title"],
+        "url": "",
     })
     save_history(history)
 

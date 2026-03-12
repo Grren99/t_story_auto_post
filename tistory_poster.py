@@ -1333,7 +1333,21 @@ class TistoryPoster:
             logger.info(f"✅ 글 발행 완료: {title}")
             logger.info(f"   카테고리: {category or '없음'}")
             logger.info(f"   썸네일: {'있음' if thumbnail else '없음'}")
-            return True
+
+            # 발행된 글의 실제 URL 추출 시도
+            published_url = ""
+            try:
+                import re as _re
+                # 관리 페이지 URL에서 글 번호 추출 (예: /manage/posts/1234)
+                m = _re.search(r'/(\d+)(?:\?|$)', post_publish_url)
+                if m:
+                    post_id = m.group(1)
+                    published_url = f"{blog_url}/{post_id}"
+                    logger.info(f"   글 URL: {published_url}")
+            except Exception:
+                pass
+
+            return published_url or True
 
         except TimeoutException:
             logger.error("발행 버튼을 찾을 수 없습니다.")
@@ -1437,6 +1451,25 @@ def main():
 
         if result:
             logger.info("=== 포스팅 완료 ===")
+
+            # 발행 URL을 post_history.json에 저장
+            if isinstance(result, str) and result.startswith("http"):
+                try:
+                    import json as _json
+                    from pathlib import Path as _Path
+                    hist_path = _Path(__file__).parent / "post_history.json"
+                    if hist_path.exists():
+                        with open(hist_path, 'r', encoding='utf-8') as f:
+                            hist = _json.load(f)
+                        post_log = hist.get("post_log", [])
+                        if post_log and post_log[-1].get("title") == post['title']:
+                            post_log[-1]["url"] = result
+                            with open(hist_path, 'w', encoding='utf-8') as f:
+                                _json.dump(hist, f, ensure_ascii=False, indent=2)
+                            logger.info(f"글 URL 저장: {result}")
+                except Exception as e:
+                    logger.warning(f"URL 저장 실패: {e}")
+
             send_telegram(
                 f"✅ <b>포스팅 성공</b>\n"
                 f"제목: {post['title']}\n"
