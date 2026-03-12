@@ -447,21 +447,43 @@ def call_gemini_api(api_key, prompt, model=None, max_retries=3):
     raise Exception(f"Gemini API 최대 재시도 횟수 초과 ({model})")
 
 
+def get_api_keys():
+    """config.json에서 Gemini API 키 목록 로드"""
+    config = load_config()
+    keys = config.get("gemini_api_keys", [])
+    if not keys:
+        single = config.get("gemini_api_key", "")
+        if single and single != "여기에_GEMINI_API_키":
+            keys = [single]
+    return keys
+
+
 def call_gemini_api_with_fallback(api_key, prompt):
-    """Gemini 모델 폴백 체인: 2.5 Flash → 2.0 Flash → 1.5 Flash"""
-    for i, model in enumerate(GEMINI_MODELS):
-        try:
-            print(f"   🔄 {model} 시도 중... ({i+1}/{len(GEMINI_MODELS)})")
-            result = call_gemini_api(api_key, prompt, model=model)
-            if i > 0:
-                print(f"   ✅ {model} 폴백 성공!")
-            return result
-        except Exception as e:
-            print(f"   ⚠️ {model} 실패: {e}")
-            if i < len(GEMINI_MODELS) - 1:
-                print(f"   ➡️ 다음 모델로 폴백합니다...")
-            else:
-                raise Exception(f"모든 Gemini 모델 실패. 마지막 에러: {e}")
+    """Gemini API 키 + 모델 폴백 체인
+    키1 → (2.5→2.0→1.5) → 키2 → (2.5→2.0→1.5) → ...
+    """
+    api_keys = get_api_keys()
+    if api_key not in api_keys:
+        api_keys.insert(0, api_key)
+
+    last_error = None
+    for ki, key in enumerate(api_keys):
+        key_label = f"키{ki+1}" if len(api_keys) > 1 else "API키"
+        for mi, model in enumerate(GEMINI_MODELS):
+            try:
+                print(f"   🔄 [{key_label}] {model} 시도 중...")
+                result = call_gemini_api(key, prompt, model=model)
+                if ki > 0 or mi > 0:
+                    print(f"   ✅ [{key_label}] {model} 폴백 성공!")
+                return result
+            except Exception as e:
+                last_error = e
+                print(f"   ⚠️ [{key_label}] {model} 실패: {e}")
+
+        if ki < len(api_keys) - 1:
+            print(f"   🔑 다음 API 키로 전환합니다...")
+
+    raise Exception(f"모든 API 키 & 모델 실패. 마지막 에러: {last_error}")
 
 
 def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
