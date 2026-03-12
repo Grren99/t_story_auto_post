@@ -1,40 +1,53 @@
 #!/bin/bash
-# ============================================================
-# 티스토리 자동 포스팅 cron 설정 스크립트
-#
-# 사용법:
-#   chmod +x setup_cron.sh
-#   ./setup_cron.sh
-#
-# 기본: 매일 오전 9시에 자동 포스팅
-# 변경하고 싶으면 아래 CRON_TIME 수정
-# ============================================================
+# ============================================
+# 티스토리 자동 포스팅 - cron 설정 스크립트
+# Linux 서버용 (30분 간격, 09:00~18:30, 하루 20회)
+# ============================================
 
-CRON_TIME="0 9 * * *"   # 매일 09:00
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHON_PATH="$(which python3)"
-LOG_FILE="${SCRIPT_DIR}/cron_post.log"
+set -e
 
-echo "=== 티스토리 자동 포스팅 cron 설정 ==="
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON_BIN="${PROJECT_DIR}/venv/bin/python"
+SCRIPT="${PROJECT_DIR}/tistory_poster.py"
+LOG_DIR="${PROJECT_DIR}/logs"
+
+echo "📁 프로젝트 경로: ${PROJECT_DIR}"
+
+mkdir -p "${LOG_DIR}"
+
+# Python 가상환경 확인
+if [ ! -f "${PYTHON_BIN}" ]; then
+    echo "❌ 가상환경이 없습니다. 먼저 설치 스크립트를 실행하세요:"
+    echo "   bash setup_server.sh"
+    exit 1
+fi
+
+# 기존 티스토리 관련 cron 제거
+echo "🗑️  기존 티스토리 cron 작업 제거 중..."
+crontab -l 2>/dev/null | grep -v "tistory_poster" > /tmp/crontab_clean 2>/dev/null || true
+
+# 새 cron 작업 추가
+echo "📝 새 cron 작업 등록 중..."
+cat >> /tmp/crontab_clean << CRON
+# === 티스토리 자동 포스팅 (30분 간격, 09:00~18:30) ===
+0,30 9-17 * * * cd ${PROJECT_DIR} && ${PYTHON_BIN} ${SCRIPT} >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
+0 18 * * * cd ${PROJECT_DIR} && ${PYTHON_BIN} ${SCRIPT} >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
+30 18 * * * cd ${PROJECT_DIR} && ${PYTHON_BIN} ${SCRIPT} >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
+# === 오래된 로그 자동 삭제 (7일 이상) ===
+0 3 * * * find ${LOG_DIR} -name "cron_*.log" -mtime +7 -delete 2>/dev/null
+CRON
+
+crontab /tmp/crontab_clean
+rm -f /tmp/crontab_clean
+
 echo ""
-echo "스크립트 경로: ${SCRIPT_DIR}"
-echo "Python 경로:   ${PYTHON_PATH}"
-echo "스케줄:        ${CRON_TIME} (매일 오전 9시)"
-echo "로그 파일:     ${LOG_FILE}"
+echo "✅ cron 설정 완료!"
 echo ""
-
-# 기존 cron에서 tistory_poster 관련 항목 제거 후 새로 추가
-CRON_CMD="${CRON_TIME} cd ${SCRIPT_DIR} && ${PYTHON_PATH} tistory_poster.py >> ${LOG_FILE} 2>&1"
-
-# 기존 crontab 백업
-crontab -l > /tmp/crontab_backup 2>/dev/null
-
-# 기존 tistory 관련 cron 제거 후 새로 추가
-(crontab -l 2>/dev/null | grep -v "tistory_poster" ; echo "${CRON_CMD}") | crontab -
-
-echo "✅ cron 등록 완료!"
+echo "등록된 스케줄:"
+echo "  09:00 ~ 18:30 (30분 간격, 하루 20회)"
+echo "  매일 03:00에 7일 이상 된 로그 자동 삭제"
 echo ""
-echo "등록된 cron 확인:"
-crontab -l | grep tistory_poster
+echo "📋 확인: crontab -l"
+echo "📜 로그: tail -f ${LOG_DIR}/cron_\$(date +%Y%m%d).log"
 echo ""
-echo "cron 제거하려면: crontab -e 에서 해당 줄 삭제"
+echo "cron 제거: crontab -e 에서 tistory 관련 줄 삭제"
