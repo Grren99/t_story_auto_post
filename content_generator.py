@@ -232,14 +232,53 @@ def pick_topic_from_pool():
     return chosen["category"], chosen["topic"]
 
 
+def is_similar_topic(new_topic, existing_topics, threshold=0.5):
+    """새 주제가 기존 주제와 유사한지 검사 (키워드 겹침 비율)"""
+    new_words = set(new_topic.lower().replace(",", " ").replace(":", " ").split())
+    # 불용어 제거
+    stopwords = {"vs", "및", "의", "와", "을", "를", "이", "가", "에", "는", "은", "로", "으로", "위한", "대한", "어떤", "가이드", "정리", "비교", "분석", "완벽", "실전", "핵심"}
+    new_words -= stopwords
+
+    if len(new_words) < 2:
+        return False
+
+    for existing in existing_topics:
+        existing_words = set(existing.lower().replace(",", " ").replace(":", " ").split()) - stopwords
+        if len(existing_words) < 2:
+            continue
+        overlap = len(new_words & existing_words)
+        similarity = overlap / min(len(new_words), len(existing_words))
+        if similarity >= threshold:
+            return True
+    return False
+
+
+def pick_balanced_category(history):
+    """최근 발행 이력 기반 카테고리 균등 분배 - 덜 쓴 카테고리 우선 선택"""
+    categories = list(CATEGORIES.keys())
+    post_log = history.get("post_log", [])
+
+    # 최근 30개 글의 카테고리 빈도 집계
+    recent_posts = post_log[-30:] if len(post_log) > 30 else post_log
+    category_counts = {cat: 0 for cat in categories}
+    for post in recent_posts:
+        cat = post.get("category", "")
+        if cat in category_counts:
+            category_counts[cat] += 1
+
+    # 최소 빈도 카테고리들 중 랜덤 선택
+    min_count = min(category_counts.values())
+    least_used = [cat for cat, count in category_counts.items() if count == min_count]
+    return random.choice(least_used)
+
+
 def generate_topic_with_gemini(api_key):
     """Gemini API로 새로운 블로그 주제 자동 생성"""
     history = load_history()
     posted = history.get("posted_topics", [])
     recent_topics = posted[-30:] if len(posted) > 30 else posted  # 최근 30개만
 
-    categories = list(CATEGORIES.keys())
-    category = random.choice(categories)
+    category = pick_balanced_category(history)
 
     recent_list = "\n".join(f"- {t}" for t in recent_topics) if recent_topics else "(없음)"
 
@@ -270,14 +309,24 @@ def generate_topic_with_gemini(api_key):
 3. 한국 개발자가 관심 가질 만한 실용적인 주제
 4. 주제만 한 줄로 출력하세요 (설명, 번호, 기호 없이)"""
 
-    raw = call_gemini_api_with_fallback(api_key, prompt)
-    topic = raw.strip().split('\n')[0].strip()
-    topic = topic.lstrip('-·•0123456789. ').strip()
-    topic = topic.replace('"', '').replace("'", "").strip()
+    # 최대 3회 시도하여 유사하지 않은 주제 생성
+    for topic_attempt in range(3):
+        raw = call_gemini_api_with_fallback(api_key, prompt)
+        topic = raw.strip().split('\n')[0].strip()
+        topic = topic.lstrip('-·•0123456789. ').strip()
+        topic = topic.replace('"', '').replace("'", "").strip()
 
-    if len(topic) < 5 or len(topic) > 100:
-        raise Exception(f"생성된 주제가 유효하지 않음: '{topic}'")
+        if len(topic) < 5 or len(topic) > 100:
+            raise Exception(f"생성된 주제가 유효하지 않음: '{topic}'")
 
+        # 기존 주제와 유사도 검사
+        if not is_similar_topic(topic, recent_topics):
+            return category, topic
+
+        print(f"   ⚠️ 유사한 주제 감지, 재생성 중... ({topic_attempt+1}/3)")
+
+    # 3회 시도 후에도 유사하면 그냥 사용
+    print(f"   ℹ️ 유사도 검사 통과 못했지만 사용합니다: {topic}")
     return category, topic
 
 
@@ -643,6 +692,62 @@ def get_related_posts(current_topic, current_category, max_count=3):
     )
 
 
+def insert_inline_internal_links(html_content, current_title, current_category, max_links=2):
+    """본문 중간에 자연스러운 내부 링크를 삽입 (SEO 강화)
+    관련 글의 키워드가 본문에 등장하면 해당 위치에 링크 삽입"""
+    history = load_history()
+    post_log = history.get("post_log", [])
+    if not post_log:
+        return html_content
+
+    # URL이 있는 글만 필터 (현재 글 제외)
+    linkable = [p for p in post_log if p.get("url") and p.get("title") != current_title]
+    if not linkable:
+        return html_content
+
+    # 같은 카테고리 글 우선
+    same_cat = [p for p in linkable if p.get("category") == current_category]
+    other_cat = [p for p in linkable if p.get("category") != current_category]
+    candidates = same_cat[-10:] + other_cat[-5:]
+
+    links_inserted = 0
+    for post in reversed(candidates):
+        if links_inserted >= max_links:
+            break
+
+        title = post.get("title", "")
+        url = post.get("url", "")
+        if not title or not url:
+            continue
+
+        # 제목에서 핵심 키워드 추출 (3글자 이상 단어)
+        keywords = [w for w in title.replace(",", " ").replace(":", " ").split() if len(w) >= 3]
+        if not keywords:
+            continue
+
+        for keyword in keywords[:3]:
+            # 이미 링크가 된 텍스트 안에 있는지 확인 (중복 링크 방지)
+            if f'>{keyword}<' not in html_content and keyword in html_content:
+                # <p> 태그 안에서만 치환 (h2, h3 등은 건드리지 않음)
+                pattern = re.compile(
+                    r'(<p[^>]*>)(.*?)(' + re.escape(keyword) + r')(.*?)(</p>)',
+                    re.IGNORECASE | re.DOTALL
+                )
+                match = pattern.search(html_content)
+                if match:
+                    link_html = f'<a href="{url}" style="color:#1a73e8;text-decoration:underline;" title="{title}">{keyword}</a>'
+                    # 첫 번째 매치만 치환
+                    full_match = match.group(0)
+                    replaced = match.group(1) + match.group(2) + link_html + match.group(4) + match.group(5)
+                    html_content = html_content.replace(full_match, replaced, 1)
+                    links_inserted += 1
+                    break
+
+    if links_inserted > 0:
+        print(f"   🔗 본문 내부 링크 {links_inserted}개 삽입")
+    return html_content
+
+
 def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
     prompt = f"""당신은 한국어 IT/개발 블로그 SEO 전문 작성자입니다.
 
@@ -718,6 +823,9 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
             else:
                 content = toc_html + "\n" + content
 
+        # 본문 중간 내부 링크 삽입 (SEO 강화)
+        content = insert_inline_internal_links(content, title, category)
+
         # 관련 글 추천 섹션 추가
         related_html = get_related_posts(title, category)
         if related_html:
@@ -734,15 +842,37 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
         )
         content = content + "\n" + cta_html
 
+        # 품질 검증: 본문 텍스트 길이 (HTML 태그 제외)
+        plain_text = re.sub(r'<[^>]+>', '', content)
+        text_length = len(plain_text.strip())
+
+        # H2 태그 개수 검증
+        h2_count = len(re.findall(r'<h2', content, re.IGNORECASE))
+
+        quality_ok = True
+        if text_length < 1500:
+            print(f"   ⚠️ 본문이 너무 짧음: {text_length}자 (최소 1500자)")
+            quality_ok = False
+        if h2_count < 3:
+            print(f"   ⚠️ H2 소제목 부족: {h2_count}개 (최소 3개)")
+            quality_ok = False
+
         # 잘림 감지: 열린 태그가 닫히지 않았는지 확인
-        if not is_html_truncated(content):
+        is_truncated = is_html_truncated(content)
+        if is_truncated:
+            print(f"   ⚠️ HTML 잘림 감지")
+            quality_ok = False
+
+        if quality_ok:
+            print(f"   ✅ 품질 검증 통과 (본문 {text_length}자, H2 {h2_count}개)")
             return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description}
 
         if attempt < max_attempts - 1:
-            print(f"   ⚠️ 글이 잘림 감지 — 재생성 시도 ({attempt+2}/{max_attempts})")
+            print(f"   🔄 품질 미달 — 재생성 시도 ({attempt+2}/{max_attempts})")
         else:
-            print(f"   🔧 글이 잘렸지만 최대 시도 횟수 도달 — 잘린 부분 복구 후 사용")
-            content = fix_truncated_html(content)
+            print(f"   🔧 최대 시도 횟수 도달 — 현재 글 사용 (본문 {text_length}자)")
+            if is_truncated:
+                content = fix_truncated_html(content)
 
     return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description}
 

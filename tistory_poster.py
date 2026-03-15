@@ -1409,6 +1409,12 @@ def main():
         # === 자동 포스팅 모드 ===
         headless = not args.no_headless and config.get('headless', True)
 
+        # 발행 시간 랜덤화 (0~30분 딜레이, 봇 패턴 방지)
+        import random as _random
+        delay_minutes = _random.randint(0, 30)
+        logger.info(f"⏰ 발행 랜덤 딜레이: {delay_minutes}분 후 시작")
+        time.sleep(delay_minutes * 60)
+
         # 글 생성 (콘텐츠 + 이미지 + 카테고리 정보)
         if args.random:
             post = get_random_post()
