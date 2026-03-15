@@ -35,7 +35,8 @@ from selenium.common.exceptions import (
     UnexpectedAlertPresentException
 )
 
-from content_generator import get_daily_post, get_random_post
+from content_generator import get_daily_post, get_random_post, TISTORY_CATEGORY_MAP
+from notifications import send_telegram
 
 # ============================================================
 # 로깅 설정
@@ -53,35 +54,13 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # 설정 로드
 # ============================================================
-CONFIG_PATH = Path(__file__).parent / "config.json"
 COOKIES_PATH = Path(__file__).parent / "cookies.pkl"
 CATEGORIES_CACHE = Path(__file__).parent / "categories_cache.json"
 
 
 def load_config():
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-def send_telegram(message):
-    """텔레그램으로 알림 메시지 전송"""
-    try:
-        config = load_config()
-        token = config.get("telegram_bot_token", "")
-        chat_id = config.get("telegram_chat_id", "")
-        if not token or not chat_id:
-            logger.warning("텔레그램 설정이 없어 알림을 건너뜁니다.")
-            return
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        data = urllib.parse.urlencode({
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": "HTML"
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=data)
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        logger.warning(f"텔레그램 알림 전송 실패: {e}")
+    from config import load_config as _load_config
+    return _load_config()
 
 
 # ============================================================
@@ -1434,7 +1413,6 @@ def main():
 
         # === 카테고리 자동 생성 모드 ===
         if args.setup_categories:
-            from content_generator import TISTORY_CATEGORY_MAP
             # 매핑에 있는 모든 고유 카테고리 이름
             needed = list(set(TISTORY_CATEGORY_MAP.values()))
             print(f"생성할 카테고리: {needed}")
