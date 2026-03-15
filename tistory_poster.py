@@ -1052,7 +1052,7 @@ class TistoryPoster:
     # ============================================================
     def create_post(self, title, html_content, category=None,
                     thumbnail=None, image_files=None, image_map=None,
-                    dry_run=False):
+                    tags=None, dry_run=False):
         """새 글 작성 및 발행"""
         blog_url = self.config['blog_url']
         new_post_url = f"{blog_url}/manage/newpost/?type=post"
@@ -1177,6 +1177,43 @@ class TistoryPoster:
         # === 6. 썸네일 업로드 (대표 이미지) ===
         if thumbnail:
             self.upload_thumbnail(thumbnail)
+
+        # === 6-1. 태그(키워드) 입력 ===
+        if tags:
+            try:
+                logger.info(f"태그 입력 시도: {tags}")
+                # 티스토리 태그 입력 필드 찾기
+                tag_input = self.driver.execute_script("""
+                    // 태그 입력 필드 찾기
+                    var selectors = [
+                        '#tagText',
+                        'input.txt_tag',
+                        '#post-tag input',
+                        'input[placeholder*="태그"]',
+                        'input[placeholder*="tag"]',
+                        '.tag-input input',
+                        '#tag input'
+                    ];
+                    for (var s of selectors) {
+                        var el = document.querySelector(s);
+                        if (el) return el;
+                    }
+                    return null;
+                """)
+                if tag_input:
+                    for tag in tags:
+                        tag = tag.strip()
+                        if not tag:
+                            continue
+                        tag_input.clear()
+                        tag_input.send_keys(tag)
+                        tag_input.send_keys(Keys.ENTER)
+                        time.sleep(0.3)
+                    logger.info(f"✅ 태그 {len(tags)}개 입력 완료")
+                else:
+                    logger.warning("태그 입력 필드를 찾을 수 없습니다")
+            except Exception as e:
+                logger.warning(f"태그 입력 실패 (무시하고 계속): {e}")
 
         if dry_run:
             logger.info("[DRY RUN] 발행하지 않고 종료합니다.")
@@ -1452,6 +1489,7 @@ def main():
             thumbnail=post.get('thumbnail'),
             image_files=post.get('image_files'),
             image_map=post.get('image_map', {}),
+            tags=post.get('tags', []),
             dry_run=args.dry_run
         )
 
@@ -1475,6 +1513,17 @@ def main():
                             logger.info(f"글 URL 저장: {result}")
                 except Exception as e:
                     logger.warning(f"URL 저장 실패: {e}")
+
+            # Google Sitemap ping (검색 색인 갱신 요청)
+            try:
+                blog_url = config['blog_url'].rstrip('/')
+                sitemap_url = f"{blog_url}/sitemap.xml"
+                ping_url = f"https://www.google.com/ping?sitemap={urllib.parse.quote(sitemap_url, safe='')}"
+                req = urllib.request.Request(ping_url, headers={"User-Agent": "TistoryAutoPost/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    logger.info(f"✅ Google Sitemap ping 성공 (HTTP {resp.status})")
+            except Exception as e:
+                logger.warning(f"Google Sitemap ping 실패 (무시): {e}")
 
             send_telegram(
                 f"✅ <b>포스팅 성공</b>\n"

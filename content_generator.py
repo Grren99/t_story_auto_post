@@ -482,9 +482,12 @@ def get_smart_images(category, topic, image_keywords="", pixabay_key=""):
                 page_url = img.get("page_url", "")
 
                 if img_url:
+                    # SEO 최적화: alt에 주제 키워드 + 이미지 태그 포함
+                    img_tags = img.get("tags", "")
+                    alt_text = f"{topic} - {img_tags}" if img_tags else topic
                     result["images_html"].append(
                         f'<div style="text-align:center;margin:20px 0;">'
-                        f'<img src="{img_url}" alt="{topic} 관련 이미지 {i+1}" '
+                        f'<img src="{img_url}" alt="{alt_text}" '
                         f'loading="lazy" '
                         f'style="max-width:100%;height:auto;border-radius:8px;'
                         f'box-shadow:0 2px 8px rgba(0,0,0,0.1);" />'
@@ -748,10 +751,21 @@ def insert_inline_internal_links(html_content, current_title, current_category, 
     return html_content
 
 
+WRITING_STYLES = [
+    "친근하고 대화하듯이 설명하는 스타일 (예: ~하죠, ~거든요, ~인데요)",
+    "전문적이고 신뢰감 있는 분석 스타일 (예: ~이다, ~할 수 있다, ~로 판단된다)",
+    "실무 경험을 공유하는 후기 스타일 (예: 직접 써보니, 실제로 적용해 본 결과)",
+    "문제 해결 중심의 실용적 스타일 (예: 이런 문제가 있었는데, 해결 방법은)",
+    "비교 분석을 통한 객관적 리뷰 스타일 (예: 각각의 장단점을 살펴보면)",
+]
+
+
 def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
+    style = random.choice(WRITING_STYLES)
     prompt = f"""당신은 한국어 IT/개발 블로그 SEO 전문 작성자입니다.
 
 아래 조건에 맞는 블로그 글을 작성해 주세요.
+⚠️ 글쓰기 톤: {style}
 
 [카테고리] {category}
 [주제] {topic}
@@ -762,7 +776,8 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
 3. ⚠️ SEO 제목 규칙: 제목에 검색 유입이 높은 핵심 키워드를 포함하되, 년도(2024년, 2025년 등)는 절대 넣지 마세요. 좋은 예: "풀스택 vs 전문분야: 개발자 커리어 어떤 길을 선택할까", "Docker 입문 가이드: 컨테이너 기초부터 배포까지", "React vs Vue 비교 분석: 프론트엔드 프레임워크 선택법"
 4. 제목 다음 줄에 이미지 검색 키워드를 영어로 3개 출력하세요 (쉼표 구분)
 5. 셋째 줄에 메타 디스크립션을 한 줄로 출력하세요 (150자 이내, 검색 결과에 노출될 요약문)
-6. 넷째 줄부터 본문을 HTML로 작성하세요
+6. 넷째 줄에 SEO 태그를 쉼표로 구분하여 5~8개 출력하세요 (예: React,프론트엔드,웹개발,SPA,컴포넌트)
+7. 다섯째 줄부터 본문을 HTML로 작성하세요
 
 [본문 구조 규칙]
 1. ⚠️ 본문은 3000자~5000자 분량으로 충분히 상세하게 작성하세요
@@ -782,7 +797,8 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
 첫 줄: 글 제목 (순수 텍스트, SEO 키워드 포함)
 둘째 줄: 이미지 검색 키워드 (영어, 쉼표 구분)
 셋째 줄: 메타 디스크립션 (한국어, 150자 이내)
-넷째 줄부터: 본문 HTML
+넷째 줄: SEO 태그 (한국어, 쉼표 구분, 5~8개)
+다섯째 줄부터: 본문 HTML
 """
 
     for attempt in range(max_attempts):
@@ -794,6 +810,7 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
 
         image_keywords = ""
         meta_description = ""
+        tags = []
         content_start = 1
 
         # 둘째 줄: 이미지 키워드
@@ -808,6 +825,13 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
             meta_line = lines[content_start].strip()
             if not meta_line.startswith('<') and len(meta_line) > 10:
                 meta_description = meta_line.replace('```html', '').replace('```', '').strip()
+                content_start += 1
+
+        # 넷째 줄: SEO 태그
+        if len(lines) > content_start:
+            tag_line = lines[content_start].strip()
+            if not tag_line.startswith('<') and ',' in tag_line:
+                tags = [t.strip() for t in tag_line.replace('```html', '').replace('```', '').split(',') if t.strip()]
                 content_start += 1
 
         content = '\n'.join(lines[content_start:]).strip()
@@ -831,6 +855,21 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
         related_html = get_related_posts(title, category)
         if related_html:
             content = content + "\n" + related_html
+
+        # Schema markup (구조화 데이터 - 검색 리치 스니펫)
+        schema_desc = meta_description or re.sub(r'<[^>]+>', '', content)[:150]
+        schema_desc = schema_desc.replace('"', '\\"').replace('\n', ' ').strip()
+        schema_json = json.dumps({
+            "@context": "https://schema.org",
+            "@type": "Article",
+            "headline": title,
+            "description": schema_desc,
+            "articleSection": category,
+            "inLanguage": "ko",
+            "keywords": ", ".join(tags) if tags else category,
+        }, ensure_ascii=False)
+        schema_html = f'<script type="application/ld+json">{schema_json}</script>\n'
+        content = schema_html + content
 
         # 하단 CTA (댓글/공감 유도)
         cta_html = (
@@ -866,7 +905,7 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
 
         if quality_ok:
             print(f"   ✅ 품질 검증 통과 (본문 {text_length}자, H2 {h2_count}개)")
-            return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description}
+            return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description, "tags": tags}
 
         if attempt < max_attempts - 1:
             print(f"   🔄 품질 미달 — 재생성 시도 ({attempt+2}/{max_attempts})")
@@ -875,7 +914,7 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
             if is_truncated:
                 content = fix_truncated_html(content)
 
-    return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description}
+    return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description, "tags": tags}
 
 
 def is_html_truncated(html):
@@ -993,6 +1032,7 @@ def get_daily_post():
         "image_map": image_data.get("image_map", {}),
         "category": tistory_category,
         "meta_description": post.get("meta_description", ""),
+        "tags": post.get("tags", []),
     }
 
 
