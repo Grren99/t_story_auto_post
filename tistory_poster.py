@@ -1247,54 +1247,49 @@ class TistoryPoster:
             except NoSuchElementException:
                 logger.warning("공개 설정 라디오 버튼 미발견. 기본값으로 진행.")
 
-            # 3단계: 최종 발행 버튼 (레이어 내부의 발행 버튼)
-            # #publish-layer-btn과 다른 버튼을 클릭해야 함
-            confirm_clicked = self.driver.execute_script("""
-                // 발행 레이어 내부의 발행/저장 버튼 찾기
-                var btns = document.querySelectorAll('button, a, [role="button"]');
-                var candidates = [];
-                for (var i = 0; i < btns.length; i++) {
-                    var btn = btns[i];
-                    var text = btn.textContent.trim();
-                    var id = btn.id || '';
-                    var cls = btn.className || '';
-                    var rect = btn.getBoundingClientRect();
-                    var isVisible = (btn.offsetParent !== null || rect.height > 0) && rect.width > 0;
+            # 3단계: 최종 발행 버튼 (Selenium 실제 클릭)
+            # JS click()은 React 이벤트를 트리거하지 못할 수 있으므로 Selenium 클릭 사용
+            publish_btn = None
+            try:
+                # 방법 1: #publish-btn ID로 직접 찾기
+                publish_btn = self.driver.find_element(By.CSS_SELECTOR, "#publish-btn")
+                logger.info(f"발행 버튼 찾음: #publish-btn (text={publish_btn.text})")
+            except NoSuchElementException:
+                # 방법 2: 레이어 내부에서 '공개 발행' 텍스트 버튼 찾기
+                try:
+                    buttons = self.driver.find_elements(By.CSS_SELECTOR, "button.btn")
+                    for btn in buttons:
+                        btn_text = btn.text.strip()
+                        btn_id = btn.get_attribute("id") or ""
+                        if btn_id == "publish-layer-btn":
+                            continue
+                        if btn_text in ("공개 발행", "발행", "발행하기", "완료", "저장"):
+                            publish_btn = btn
+                            logger.info(f"발행 버튼 찾음: text={btn_text}, id={btn_id}")
+                            break
+                except Exception as e:
+                    logger.warning(f"발행 버튼 탐색 실패: {e}")
 
-                    // #publish-layer-btn은 제외 (이미 클릭한 버튼)
-                    if (id === 'publish-layer-btn') continue;
+            if publish_btn:
+                # Selenium ActionChains로 실제 마우스 클릭
+                from selenium.webdriver.common.action_chains import ActionChains
+                try:
+                    ActionChains(self.driver).move_to_element(publish_btn).click().perform()
+                    logger.info("최종 발행 버튼: Selenium ActionChains 클릭 완료")
+                except Exception as e:
+                    logger.warning(f"ActionChains 클릭 실패, 일반 클릭 시도: {e}")
+                    publish_btn.click()
+                    logger.info("최종 발행 버튼: Selenium 일반 클릭 완료")
+            else:
+                # 최후 수단: JS click
+                logger.warning("Selenium으로 발행 버튼 못 찾음. JS 폴백 시도.")
+                js_result = self.driver.execute_script("""
+                    var btn = document.getElementById('publish-btn');
+                    if (btn) { btn.click(); return 'js-clicked: publish-btn'; }
+                    return 'no-button-found';
+                """)
+                logger.info(f"JS 폴백 결과: {js_result}")
 
-                    // 발행 관련 버튼 찾기
-                    if (isVisible && (
-                        id === 'publish-btn' ||
-                        (cls.indexOf('btn-publish') >= 0 && cls.indexOf('btn-publish-layer') < 0) ||
-                        cls.indexOf('btn_ok') >= 0 ||
-                        cls.indexOf('btn_submit') >= 0 ||
-                        text === '발행' || text === '공개 발행' || text === '저장' ||
-                        text === '완료' || text === '발행하기'
-                    )) {
-                        candidates.push({
-                            el: btn, text: text, id: id,
-                            cls: cls.substring(0, 60),
-                            w: Math.round(rect.width), h: Math.round(rect.height)
-                        });
-                    }
-                }
-
-                // 후보 로깅
-                var log = [];
-                candidates.forEach(function(c) {
-                    log.push(c.text + '(id=' + c.id + ',cls=' + c.cls + ',w=' + c.w + ')');
-                });
-
-                // 가장 적합한 버튼 클릭
-                if (candidates.length > 0) {
-                    candidates[0].el.click();
-                    return 'clicked: ' + candidates[0].text + ' | all: ' + log.join(', ');
-                }
-                return 'no_candidates | searched: ' + btns.length;
-            """)
-            logger.info(f"최종 발행 버튼: {confirm_clicked}")
             time.sleep(5)
 
             # 4단계: alert 체크 (Tistory 일일 발행 제한 등)
@@ -1342,9 +1337,24 @@ class TistoryPoster:
             if post_publish_url != pre_publish_url:
                 logger.info(f"✅ 글 발행 성공 확인 (URL 변경됨)")
             else:
-                # URL 안 바뀌었으면 스크린샷 남기기
-                self.driver.save_screenshot('debug_after_publish.png')
-                logger.warning("⚠️ 발행 후 URL이 변경되지 않았습니다. 스크린샷: debug_after_publish.png")
+                # URL 안 바뀌면 조금 더 기다려보고 재확인
+                logger.warning("⚠️ 발행 후 URL 미변경. 5초 추가 대기 후 재확인...")
+                time.sleep(5)
+                try:
+                    post_publish_url = self.driver.current_url
+                except UnexpectedAlertPresentException:
+                    try:
+                        self.driver.switch_to.alert.dismiss()
+                    except Exception:
+                        pass
+                    post_publish_url = self.driver.current_url
+
+                if post_publish_url != pre_publish_url:
+                    logger.info(f"✅ 글 발행 성공 확인 (지연 후 URL 변경됨)")
+                else:
+                    self.driver.save_screenshot('debug_after_publish.png')
+                    logger.error("❌ 발행 실패: URL이 변경되지 않았습니다. 스크린샷: debug_after_publish.png")
+                    return False
 
             logger.info(f"✅ 글 발행 완료: {title}")
             logger.info(f"   카테고리: {category or '없음'}")
@@ -1491,17 +1501,6 @@ def main():
                             logger.info(f"글 URL 저장: {result}")
                 except Exception as e:
                     logger.warning(f"URL 저장 실패: {e}")
-
-            # Google Sitemap ping (검색 색인 갱신 요청)
-            try:
-                blog_url = config['blog_url'].rstrip('/')
-                sitemap_url = f"{blog_url}/sitemap.xml"
-                ping_url = f"https://www.google.com/ping?sitemap={urllib.parse.quote(sitemap_url, safe='')}"
-                req = urllib.request.Request(ping_url, headers={"User-Agent": "TistoryAutoPost/1.0"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    logger.info(f"✅ Google Sitemap ping 성공 (HTTP {resp.status})")
-            except Exception as e:
-                logger.warning(f"Google Sitemap ping 실패 (무시): {e}")
 
             send_telegram(
                 f"✅ <b>포스팅 성공</b>\n"
