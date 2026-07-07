@@ -2,6 +2,9 @@
 config.json
 cookies.pkl
 post_history.json
+topic_embeddings.json
+topic_taxonomy.json
+categories_cache.json
 
 # 다운로드된 이미지
 images/

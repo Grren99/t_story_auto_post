@@ -1423,8 +1423,9 @@ def main():
 
         # === 카테고리 자동 생성 모드 ===
         if args.setup_categories:
-            # 매핑에 있는 모든 고유 카테고리 이름
-            needed = list(set(TISTORY_CATEGORY_MAP.values()))
+            # 매핑에 있는 모든 고유 카테고리 이름 + 학습된 신규 카테고리
+            from config import get_learned_categories
+            needed = list(set(TISTORY_CATEGORY_MAP.values()) | set(get_learned_categories().keys()))
             print(f"생성할 카테고리: {needed}")
             poster.setup_driver(headless=False)  # 화면 보이게
             poster.login()
@@ -1470,6 +1471,14 @@ def main():
 
         poster.setup_driver(headless=headless)
         poster.login()
+
+        # 카테고리가 블로그에 없으면 자동 생성 (Gemini가 학습한 신규 카테고리 대응)
+        if post.get('category') and config.get('auto_create_categories', True):
+            try:
+                poster.setup_categories([post['category']])
+            except Exception as e:
+                logger.warning(f"카테고리 사전 확인 실패 — 무시하고 진행: {e}")
+
         result = poster.create_post(
             title=post['title'],
             html_content=content,

@@ -7,5 +7,9 @@
     "pixabay_api_key": "your_pixabay_api_key",
     "post_time": "09:00",
     "headless": true,
-    "chrome_driver_path": "auto"
+    "chrome_driver_path": "auto",
+    "series_post_ratio": 0.2,
+    "wildcard_post_ratio": 0.1,
+    "embedding_similarity_threshold": 0.85,
+    "auto_create_categories": true
 }

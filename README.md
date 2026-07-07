@@ -8,12 +8,17 @@ Google Gemini API로 SEO 최적화된 글을 생성하고, Pixabay에서 관련 
 
 ## 주요 기능
 
-- Gemini 2.5-flash 기반 IT/개발 블로그 글 자동 생성 (3,000~5,000자)
-- 10개 카테고리 자동 분류 & 균등 분배
+- Gemini 2.5-flash 기반 IT/개발 블로그 글 자동 생성 (숏폼/표준/롱폼 길이 믹스)
+- 16개 시드 카테고리 + Gemini가 새 카테고리를 스스로 제안·학습 (최대 8개 추가, 티스토리에 자동 생성)
+- 세부주제 자동 확장 (발행 15회마다 Gemini가 새 세부 영역 추가, 기존 영역과 겹치면 자동 거부)
+- 글 다양화: 제목 스타일 8종 + 과사용 표현 자동 금지, 글 형식 8종(FAQ/리스트/사례연구 등), 타겟 독자 6종 랜덤 조합
+- 와일드카드 모드: 10% 확률로 카테고리를 벗어난 니치/교차 주제 발굴
 - Pixabay 이미지 자동 검색 및 본문 삽입 (3장, lazy loading)
 - SEO 자동 태그 5~8개 생성 & 티스토리 태그 입력
 - 카카오 계정으로 티스토리 자동 로그인 (쿠키 기반)
-- 중복/유사 주제 방지 (키워드 유사도 검사)
+- 전체 발행 이력 기반 중복 방지 (키워드 + Gemini 임베딩 의미 유사도 검사)
+- 세부주제 × 앵글 매트릭스로 주제 다양화 (후보 10개 생성 후 가장 참신한 주제 선택)
+- 연재 모드: 과거 글의 후속/심화편 자동 작성 + 이전 글 링크 삽입 (기본 20%)
 - 발행 시간 0~30분 랜덤 딜레이 (봇 패턴 방지)
 - 글 품질 검증 (최소 글자수, H2 개수, HTML 잘림 감지)
 - 텔레그램 알림 (성공/실패/일일 제한)
@@ -42,7 +47,7 @@ tistory_auto_post/
 ├── content_generator.py       # 하위 호환 래퍼 (기존 import 유지)
 ├── config.py                  # 설정, 상수, 카테고리, 히스토리 관리
 ├── gemini_api.py              # Gemini API 호출, 모델/키 폴백 체인
-├── topic_generator.py         # 주제 생성, 유사도 검사, 카테고리 균등 분배
+├── topic_generator.py         # 주제 후보 생성, 임베딩 중복 차단, 연재 모드, 카테고리 분배
 ├── post_generator.py          # 글 생성, 품질 검증, 이미지 삽입
 ├── image_handler.py           # Pixabay/Unsplash 이미지 검색 & 다운로드
 ├── seo_utils.py               # TOC, 내부링크, Schema markup, CTA, HTML복구
@@ -50,6 +55,7 @@ tistory_auto_post/
 ├── config.json                # 설정 파일 (git 제외)
 ├── config.example.json        # 설정 파일 샘플
 ├── post_history.json          # 발행 이력 (중복 방지)
+├── topic_embeddings.json      # 주제 임베딩 벡터 (의미 기반 중복 검사, git 제외)
 ├── run_daily_post.sh          # 스케줄러용 실행 스크립트
 ├── setup_cron.sh              # Linux cron 등록 (07~21시, 15회/일)
 ├── setup_server.sh            # Rocky Linux 서버 초기 설치
@@ -229,10 +235,25 @@ Gemini가 매번 새로운 주제를 생성하며, 카테고리별 균등 분배
 
 ## Gemini API 무료 한도
 
-- 모델: `gemini-2.5-flash`
-- 분당 15회 / 하루 1,500회 요청
-- 하루 15편 포스팅해도 여유 (주제 생성 + 글 생성 = 글당 2~3회)
-- API 키 여러 개 등록 시 자동 폴백
+- 모델: `gemini-2.5-flash` — **무료 티어 하루 20회/키** (정책 변경으로 대폭 축소됨)
+- 글 1편당 생성 호출 2~4회 (주제 후보 1회 + 본문 1~2회) + 임베딩 호출 수 회 (임베딩은 별도 쿼터)
+- 하루 여러 편 발행하려면 **API 키 여러 개 등록 필수** (`gemini_api_keys` 배열) — 자동 폴백
+- 한도 도달 시 자동으로 다음 키로 전환
+
+## 중복 방지 & 다양성 설정 (config.json)
+
+| 키 | 기본값 | 설명 |
+|----|--------|------|
+| `series_post_ratio` | 0.2 | 연재(후속편) 글 비율. 0이면 비활성화 |
+| `wildcard_post_ratio` | 0.1 | 카테고리를 벗어난 자유 주제 비율. 0이면 비활성화 |
+| `embedding_similarity_threshold` | 0.85 | 이 값 이상이면 중복 판정. 낮출수록 엄격 |
+| `auto_create_categories` | true | 발행 직전 카테고리가 블로그에 없으면 자동 생성 |
+
+Gemini가 학습한 신규 카테고리는 `topic_taxonomy.json`에 저장되고, 발행 직전 pre-flight에서
+티스토리 블로그에 자동 생성됩니다 (`auto_create_categories`). `--setup-categories`를 수동 실행해도 됩니다.
+
+새 주제는 **전체 발행 이력**과 비교됩니다: 키워드 겹침 1차 필터 → Gemini 임베딩 코사인 유사도 2차 필터.
+주제 임베딩은 `topic_embeddings.json`에 누적 저장되어 1~2년 운영해도 의미가 겹치는 주제를 차단합니다.
 
 ---
 

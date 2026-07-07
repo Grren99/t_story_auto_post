@@ -13,7 +13,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
-from config import IMAGES_DIR, IMAGE_KEYWORDS
+from config import IMAGES_DIR, get_image_keyword
 
 
 def download_image(image_url, filename, retry=4):
@@ -123,7 +123,7 @@ def get_smart_images(category, topic, image_keywords="", pixabay_key=""):
     result = {"thumbnail": None, "files": [], "images_html": [], "image_map": {}}
 
     if pixabay_key:
-        search_query = image_keywords or IMAGE_KEYWORDS.get(category, "programming coding")
+        search_query = image_keywords or get_image_keyword(category)
         print(f"🖼️ Pixabay 이미지 검색 중: {search_query}")
 
         images = search_pixabay_images(pixabay_key, search_query, count=3)

@@ -2,9 +2,11 @@
 Gemini API 호출 모듈
 - 단일 모델 호출 (429 재시도)
 - 다중 API 키 + 모델 폴백 체인
+- 임베딩 API (주제 중복 검사용)
 """
 
 import json
+import math
 import time
 import urllib.request
 import urllib.error
@@ -17,6 +19,10 @@ from config import load_config
 GEMINI_MODELS = [
     "gemini-2.5-flash",
 ]
+
+# 임베딩은 모델이 다르면 벡터 비교가 불가능하므로 단일 모델 고정
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIM = 512
 
 
 def call_gemini_api(api_key, prompt, model=None, max_retries=1):
@@ -87,3 +93,44 @@ def call_gemini_api_with_fallback(api_key, prompt):
             print(f"   🔑 다음 API 키로 전환합니다...")
 
     raise Exception(f"모든 API 키 & 모델 실패. 마지막 에러: {last_error}")
+
+
+# ============================================================
+# 임베딩 API (주제 의미 유사도 검사용)
+# ============================================================
+def call_embedding_api(api_key, text):
+    """텍스트 임베딩 벡터 생성 (정규화된 벡터 반환)"""
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{EMBEDDING_MODEL}:embedContent?key={api_key}")
+    payload = {
+        "model": f"models/{EMBEDDING_MODEL}",
+        "content": {"parts": [{"text": text}]},
+        "outputDimensionality": EMBEDDING_DIM,
+    }
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            values = result["embedding"]["values"]
+    except urllib.error.HTTPError as e:
+        raise Exception(f"임베딩 API 에러 ({e.code}): {e.read().decode('utf-8')[:200]}")
+
+    # 차원 축소된 벡터는 정규화가 깨지므로 직접 정규화 (코사인 = 내적)
+    norm = math.sqrt(sum(v * v for v in values)) or 1.0
+    return [round(v / norm, 6) for v in values]
+
+
+def get_embedding_with_fallback(api_key, text):
+    """임베딩 생성 (API 키 폴백). 모든 키 실패 시 None 반환 — 호출부에서 키워드 검사로 폴백"""
+    api_keys = get_api_keys()
+    if api_key and api_key not in api_keys:
+        api_keys.insert(0, api_key)
+
+    for key in api_keys:
+        try:
+            return call_embedding_api(key, text)
+        except Exception as e:
+            print(f"   ⚠️ 임베딩 실패: {e}")
+    return None

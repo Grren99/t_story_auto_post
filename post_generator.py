@@ -12,7 +12,9 @@ import datetime
 
 from config import (
     CATEGORIES, TISTORY_CATEGORY_MAP, WRITING_STYLES,
-    load_config, load_history, save_history
+    TITLE_STYLES, TITLE_CLICHES, POST_FORMATS, PERSONAS, LENGTH_PROFILES,
+    load_config, load_history, save_history,
+    load_embeddings, save_embeddings
 )
 from gemini_api import call_gemini_api_with_fallback
 from topic_generator import pick_topic
@@ -24,29 +26,67 @@ from seo_utils import (
 )
 
 
-def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
+def get_banned_title_phrases(window=15, min_count=2):
+    """최근 제목에서 반복 사용된 상투 표현 목록 (제목 프롬프트에서 금지)"""
+    history = load_history()
+    recent_titles = [p.get("title", "") for p in history.get("post_log", [])[-window:]]
+    return [ph for ph in TITLE_CLICHES
+            if sum(1 for t in recent_titles if ph in t) >= min_count]
+
+
+def _pick_length_profile():
+    names = [p for p in LENGTH_PROFILES]
+    weights = [p[3] for p in LENGTH_PROFILES]
+    return random.choices(names, weights=weights, k=1)[0]
+
+
+def generate_post_with_gemini(api_key, category, topic, max_attempts=2,
+                              angle=None, series_parent=None):
     """Gemini API로 SEO 최적화된 블로그 글 생성"""
     style = random.choice(WRITING_STYLES)
+    title_style = random.choice(TITLE_STYLES)
+    format_name, format_desc = random.choice(POST_FORMATS)
+    persona = random.choice(PERSONAS)
+    length_name, length_spec, min_chars, _ = _pick_length_profile()
+    banned_phrases = get_banned_title_phrases()
+
+    print(f"   🎨 변주: 형식={format_name}, 길이={length_name}, 독자={persona.split(' (')[0]}")
+
+    banned_text = ""
+    if banned_phrases:
+        banned_text = f"\n   ⚠️ 최근 글에서 과사용된 다음 표현은 제목에 절대 쓰지 마세요: {', '.join(banned_phrases)}"
+
+    angle_text = f"\n[글의 관점] {angle}" if angle else ""
+    series_text = ""
+    if series_parent:
+        series_text = f"""
+[연재 정보] 이 글은 이전 글 "{series_parent['title']}"의 후속편입니다.
+- 도입부에서 이전 글에서 다룬 내용을 한두 문장으로 짚고, 이번 글이 어떤 다음 단계를 다루는지 밝히세요
+- 이전 글 내용을 반복하지 말고 명확히 발전된 내용을 작성하세요"""
+
     prompt = f"""당신은 한국어 IT/개발 블로그 SEO 전문 작성자입니다.
 
 아래 조건에 맞는 블로그 글을 작성해 주세요.
 ⚠️ 글쓰기 톤: {style}
 
 [카테고리] {category}
-[주제] {topic}
+[주제] {topic}{angle_text}
+[타겟 독자] {persona} — 이 독자의 눈높이와 관심사에 맞춰 쓰세요
+[글 형식] {format_desc}{series_text}
 
 [작성 규칙]
 1. 반드시 HTML 태그로 포맷팅하세요 (티스토리 블로그용)
 2. 제목은 별도로 첫 줄에 순수 텍스트로 출력하세요 (HTML 태그 없이)
-3. ⚠️ SEO 제목 규칙: 제목에 검색 유입이 높은 핵심 키워드를 포함하되, 년도(2024년, 2025년 등)는 절대 넣지 마세요. 좋은 예: "풀스택 vs 전문분야: 개발자 커리어 어떤 길을 선택할까", "Docker 입문 가이드: 컨테이너 기초부터 배포까지", "React vs Vue 비교 분석: 프론트엔드 프레임워크 선택법"
+3. ⚠️ SEO 제목 규칙: 제목에 검색 유입이 높은 핵심 키워드를 포함하되, 년도(2024년, 2025년 등)는 절대 넣지 마세요.
+   ⚠️ 제목 스타일: {title_style}{banned_text}
 4. 제목 다음 줄에 이미지 검색 키워드를 영어로 3개 출력하세요 (쉼표 구분)
 5. 셋째 줄에 메타 디스크립션을 한 줄로 출력하세요 (150자 이내, 검색 결과에 노출될 요약문)
 6. 넷째 줄에 SEO 태그를 쉼표로 구분하여 5~8개 출력하세요 (예: React,프론트엔드,웹개발,SPA,컴포넌트)
 7. 다섯째 줄부터 본문을 HTML로 작성하세요
 
 [본문 구조 규칙]
-1. ⚠️ 본문은 3000자~5000자 분량으로 충분히 상세하게 작성하세요
-2. H2 소제목을 5~7개 사용하여 큰 구조를 잡으세요
+1. ⚠️ 본문 분량: {length_spec}
+2. [글 형식] 지시에 따라 H2 소제목으로 큰 구조를 잡으세요 (최소 3개 이상)
 3. 각 H2 아래에 필요하면 H3 소제목을 1~2개 추가하세요
 4. 핵심 키워드는 <b> 태그로 강조
 5. 비교 내용이 있으면 <table> 사용 (스타일 포함)
@@ -133,8 +173,8 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
         h2_count = len(re.findall(r'<h2', content, re.IGNORECASE))
 
         quality_ok = True
-        if text_length < 1500:
-            print(f"   ⚠️ 본문이 너무 짧음: {text_length}자 (최소 1500자)")
+        if text_length < min_chars:
+            print(f"   ⚠️ 본문이 너무 짧음: {text_length}자 (최소 {min_chars}자, {length_name})")
             quality_ok = False
         if h2_count < 3:
             print(f"   ⚠️ H2 소제목 부족: {h2_count}개 (최소 3개)")
@@ -147,7 +187,9 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
 
         if quality_ok:
             print(f"   ✅ 품질 검증 통과 (본문 {text_length}자, H2 {h2_count}개)")
-            return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description, "tags": tags}
+            return {"title": title, "content": content, "image_keywords": image_keywords,
+                    "meta_description": meta_description, "tags": tags,
+                    "format": format_name, "persona": persona, "length": length_name}
 
         if attempt < max_attempts - 1:
             print(f"   🔄 품질 미달 — 재생성 시도 ({attempt+2}/{max_attempts})")
@@ -156,7 +198,9 @@ def generate_post_with_gemini(api_key, category, topic, max_attempts=2):
             if is_truncated:
                 content = fix_truncated_html(content)
 
-    return {"title": title, "content": content, "image_keywords": image_keywords, "meta_description": meta_description, "tags": tags}
+    return {"title": title, "content": content, "image_keywords": image_keywords,
+            "meta_description": meta_description, "tags": tags,
+            "format": format_name, "persona": persona, "length": length_name}
 
 
 def get_daily_post():
@@ -165,16 +209,24 @@ def get_daily_post():
     api_key = config.get("gemini_api_key", "")
     pixabay_key = config.get("pixabay_api_key", "")
 
-    category, topic = pick_topic(api_key)
+    picked = pick_topic(api_key)
+    category = picked["category"]
+    topic = picked["topic"]
+    series_parent = picked.get("series_parent")
     print(f"📌 선택된 카테고리: {category}")
     print(f"📌 선택된 주제: {topic}")
+    if series_parent:
+        print(f"📌 연재 후속편: {series_parent['title']}")
 
     post = None
 
     if api_key and api_key != "여기에_GEMINI_API_키":
         try:
             print("🤖 Gemini API로 글 생성 중 (모델 폴백 체인 활성화)...")
-            post = generate_post_with_gemini(api_key, category, topic)
+            post = generate_post_with_gemini(
+                api_key, category, topic,
+                angle=picked.get("angle"), series_parent=series_parent
+            )
             print(f"✅ 생성 완료: {post['title']} ({len(post['content'])}자)")
         except Exception as e:
             print(f"⚠️ 모든 Gemini 모델 실패: {e}")
@@ -202,17 +254,46 @@ def get_daily_post():
     if image_data["thumbnail"]:
         print(f"✅ 썸네일: {image_data['thumbnail']}")
 
+    # 연재 후속편이면 본문 상단에 이전 글 링크 박스 삽입
+    if series_parent and series_parent.get("url"):
+        series_html = (
+            f'<p style="font-size:15px;background:#fff8e6;border-left:4px solid #f0a500;'
+            f'padding:12px 16px;border-radius:6px;margin-bottom:20px;">'
+            f'📚 이 글은 <a href="{series_parent["url"]}" '
+            f'style="color:#1a73e8;font-weight:bold;">{series_parent["title"]}</a>'
+            f'의 후속편입니다. 기초 내용이 궁금하다면 이전 글을 먼저 읽어보세요.</p>'
+        )
+        post["content"] = series_html + "\n" + post["content"]
+
     # 발행 이력 저장
     history = load_history()
     history["posted_topics"].append(topic)
-    history.setdefault("post_log", []).append({
+    log_entry = {
         "date": str(datetime.date.today()),
         "category": category,
         "topic": topic,
         "title": post["title"],
         "url": "",
-    })
+    }
+    if picked.get("angle"):
+        log_entry["angle"] = picked["angle"]
+    for key in ("format", "persona", "length"):
+        if post.get(key):
+            log_entry[key] = post[key]
+    if series_parent:
+        log_entry["series_parent"] = series_parent["title"]
+    history.setdefault("post_log", []).append(log_entry)
     save_history(history)
+
+    # 주제 임베딩 저장 (향후 의미 기반 중복 차단에 사용)
+    embedding = picked.get("embedding")
+    if embedding is None:
+        from gemini_api import get_embedding_with_fallback
+        embedding = get_embedding_with_fallback(api_key, topic)
+    if embedding:
+        embeddings = load_embeddings()
+        embeddings[topic] = embedding
+        save_embeddings(embeddings)
 
     tistory_category = TISTORY_CATEGORY_MAP.get(category, category)
 
