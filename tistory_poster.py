@@ -1402,6 +1402,8 @@ def main():
                         help='기존 카테고리 목록 조회')
     parser.add_argument('--setup-categories', action='store_true',
                         help='필요한 카테고리 자동 생성 (없는 것만)')
+    parser.add_argument('--now', action='store_true',
+                        help='랜덤 딜레이 없이 즉시 실행')
     args = parser.parse_args()
 
     config = load_config()
@@ -1435,11 +1437,14 @@ def main():
         # === 자동 포스팅 모드 ===
         headless = not args.no_headless and config.get('headless', True)
 
-        # 발행 시간 랜덤화 (0~30분 딜레이, 봇 패턴 방지)
-        import random as _random
-        delay_minutes = _random.randint(0, 30)
-        logger.info(f"⏰ 발행 랜덤 딜레이: {delay_minutes}분 후 시작")
-        time.sleep(delay_minutes * 60)
+        # 발행 시간 랜덤화 (0~30분 딜레이, 봇 패턴 방지) — --now로 건너뛰기 가능
+        if args.now:
+            logger.info("⚡ --now 옵션: 딜레이 없이 즉시 실행")
+        else:
+            import random as _random
+            delay_minutes = _random.randint(0, 30)
+            logger.info(f"⏰ 발행 랜덤 딜레이: {delay_minutes}분 후 시작")
+            time.sleep(delay_minutes * 60)
 
         # 글 생성 (콘텐츠 + 이미지 + 카테고리 정보)
         if args.random:
