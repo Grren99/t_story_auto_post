@@ -29,8 +29,8 @@ crontab -l 2>/dev/null | grep -v "tistory_poster" > /tmp/crontab_clean 2>/dev/nu
 # 새 cron 작업 추가
 echo "📝 새 cron 작업 등록 중..."
 cat >> /tmp/crontab_clean << CRON
-# === 티스토리 자동 포스팅 (07~21시 분산, 10회/일) ===
-0 7,9,10,12,13,15,16,18,19,21 * * * cd ${PROJECT_DIR} && ${PYTHON_BIN} ${SCRIPT} >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
+# === 티스토리 자동 포스팅 (07~21시 분산, 10회/일, 크래시 자동 재시도) ===
+0 7,9,10,12,13,15,16,18,19,21 * * * ${PROJECT_DIR}/run_with_retry.sh >> ${LOG_DIR}/cron_\$(date +\%Y\%m\%d).log 2>&1
 # === 오래된 로그 자동 삭제 (7일 이상) ===
 0 3 * * * find ${LOG_DIR} -name "cron_*.log" -mtime +7 -delete 2>/dev/null
 CRON
