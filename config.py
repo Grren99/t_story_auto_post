@@ -406,6 +406,14 @@ LENGTH_PROFILES = [
 # ============================================================
 # 설정 / 히스토리 로드 & 저장
 # ============================================================
+def _atomic_write_json(path, data, indent=None):
+    """임시 파일에 쓴 뒤 교체 — 저장 도중 프로세스가 죽어도 원본이 손상되지 않음"""
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=indent)
+    tmp.replace(path)
+
+
 def load_config():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
@@ -419,15 +427,20 @@ def load_history():
 
 
 def save_history(history):
-    with open(HISTORY_PATH, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(HISTORY_PATH, history, indent=2)
 
 
 def load_embeddings():
-    """주제별 임베딩 벡터 저장소 로드 ({주제: [벡터]})"""
+    """주제별 임베딩 벡터 저장소 로드 ({주제: [벡터]})
+    파일이 손상됐으면 .corrupt로 백업하고 빈 저장소로 시작 (백필로 복구 가능)"""
     if EMBEDDINGS_PATH.exists():
-        with open(EMBEDDINGS_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(EMBEDDINGS_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            corrupt = EMBEDDINGS_PATH.with_suffix('.json.corrupt')
+            EMBEDDINGS_PATH.replace(corrupt)
+            print(f"⚠️ topic_embeddings.json 손상 감지 → {corrupt.name}로 백업 후 초기화: {e}")
     return {}
 
 
@@ -440,8 +453,7 @@ def load_taxonomy():
 
 
 def save_taxonomy(taxonomy):
-    with open(TAXONOMY_PATH, 'w', encoding='utf-8') as f:
-        json.dump(taxonomy, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(TAXONOMY_PATH, taxonomy, indent=2)
 
 
 def get_learned_categories():
@@ -475,5 +487,4 @@ def get_image_keyword(category):
 
 
 def save_embeddings(embeddings):
-    with open(EMBEDDINGS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(embeddings, f, ensure_ascii=False)
+    _atomic_write_json(EMBEDDINGS_PATH, embeddings)

@@ -29,18 +29,24 @@ def main():
         print("✅ 모든 주제가 이미 임베딩되어 있습니다.")
         return
 
+    done = 0
     for i, topic in enumerate(todo):
         vec = get_embedding_with_fallback(api_key, topic)
         if vec is None:
             print(f"❌ 임베딩 실패로 중단 — 다시 실행하면 이어서 진행됩니다: {topic}")
             break
         embeddings[topic] = vec
-        save_embeddings(embeddings)
-        if (i + 1) % 10 == 0 or i + 1 == len(todo):
-            print(f"  {i + 1}/{len(todo)} 완료")
+        done += 1
+        # 10개마다 저장 (원자적 쓰기 — 중단돼도 파일이 손상되지 않음)
+        if done % 10 == 0:
+            save_embeddings(embeddings)
+            print(f"  {done}/{len(todo)} 완료")
         time.sleep(0.3)
 
-    print(f"✅ 백필 완료: 총 {len(embeddings)}개 임베딩 저장됨")
+    save_embeddings(embeddings)
+    print(f"✅ 백필 종료: 이번에 {done}개 처리, 총 {len(embeddings)}개 저장됨")
+    if done < len(todo):
+        print("   남은 주제가 있습니다 — 스크립트를 다시 실행하면 이어서 진행됩니다.")
 
 
 if __name__ == "__main__":
